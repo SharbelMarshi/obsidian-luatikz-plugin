@@ -16,9 +16,20 @@ export interface PresentBlockOptions extends PresentErrorOptions {
 	isDarkTheme?: boolean;
 }
 
-/** Stage 1: normalize source and extract Obsidian-only metadata. */
-export function prepareTikzBlock(source: string): PreparedTikzSource {
-	return prepareTikzRenderSource(source);
+/**
+ * Stage 1: normalize source and extract Obsidian-only metadata.
+ *
+ * `settings` supplies the vault-wide presentation defaults (alignment and
+ * rendered width); a block's own `% align=` / `% width=` directive still wins.
+ */
+export function prepareTikzBlock(
+	source: string,
+	settings?: Pick<LuaTikzSettings, 'defaultDiagramAlign' | 'defaultDiagramWidth'>,
+): PreparedTikzSource {
+	return prepareTikzRenderSource(source, {
+		align: settings?.defaultDiagramAlign,
+		width: settings?.defaultDiagramWidth,
+	});
 }
 
 /** Stage 2: render prepared TikZ source through the configured engine. */

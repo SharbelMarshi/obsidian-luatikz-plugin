@@ -11,7 +11,28 @@ The intended workflow while writing lecture notes:
 
 **Tools** — Select, Pan, Line, Arrow, Path (polyline), Bézier, Freehand, Paint fill, Text node, Math node, and Function plot, plus one **Shapes** menu button that expands into Rectangle, Rounded rectangle, Triangle, Circle, Ellipse, Arc, Diamond, Polygon, Star, and Grid, and one **Circuit** menu button with electric components — plus Delete, Duplicate, Undo, Redo. Everything generates plain native TikZ: `\draw (0,0) -- (3,2);`, `\draw[->] …`, `rectangle`, `circle[radius=1cm]`, `ellipse[x radius=…]`, `arc[start angle=…]`, `.. controls … ..` curves, `\node at (x,y) {$\alpha$};`, and closed `-- cycle` paths for triangles/polygons/stars/diamonds.
 
-**Circuit components** — the **Circuit** toolbar button opens a menu of circuitikz elements: Resistor (zigzag and rectangular-box variants), Capacitor, Inductor, Voltage source (± circle and single-cell variants), Current source, Battery, Diode, LED, Switch, Lamp, Ammeter, Voltmeter, a junction Dot, and Ground. Pick one and a translucent preview follows your cursor; a single click drops it there — bipoles as a native circuitikz statement (`\draw (0,0) to[R] (2,0);`, a 2 cm span centered on the click, endpoints draggable afterwards), Ground as `\node[ground] at (…) {};`. Sources use the american symbols — the voltage source shows **+ −** (kept upright via an auto-inserted, version-safe `\ctikzset` line), the current source an arrow. Components stay first-class editable objects: select them, drag their endpoints, restyle them. The canvas marks each component with a schematic placeholder (box or circle) on the wire; the compiled preview shows the real circuitikz symbol on both engines (circuitikz loads automatically on the mobile/TikZJax path). More generally, any `to[...]` segment — including hand-written `to[bend left]` — is now visually editable: the options are preserved verbatim and only the coordinates you drag are rewritten.
+**Circuit components** — the **Circuit** toolbar button opens a menu of circuitikz elements: Resistor (a seven-tooth american zigzag, plus the rectangular-box variant), Capacitor, Inductor, Voltage source (± circle and single-cell variants), Current source, **Dependent voltage source**, **Dependent current source**, **Dependent source (blank)**, Battery, Diode, LED, Switch, Lamp, Ammeter, Voltmeter, a junction Dot, and Ground. Pick one and a translucent preview follows your cursor; a single click drops it there — bipoles as a native circuitikz statement (`\draw (0,0) to[R] (2,0);`, a 2 cm span centered on the click, endpoints draggable afterwards), Ground as `\node[ground] at (…) {};`. Sources use the american symbols — the voltage source shows **+ −** (kept upright via an auto-inserted, version-safe `\ctikzset` line), the current source an arrow. Dependent (controlled) sources are the american rhombus bodies (`to[american controlled voltage source]`, `to[american controlled current source]`, `to[empty controlled source]`), so an independent source reads as a circle and a dependent one as a diamond at a glance, on the canvas and in the compiled output alike. Components stay first-class editable objects: select them, drag their endpoints, restyle them. A placed resistor also brings `\ctikzset{bipoles/resistor/height=.16, bipoles/resistor/width=.6}` with it (once per fence, and never if the fence already sets it): circuitikz's stock zigzag is taller and wider than the glyph the canvas previews, so without it the compiled symbol would not match what you placed. The canvas marks each component with a schematic placeholder (box or circle) on the wire; the compiled preview shows the real circuitikz symbol on both engines (circuitikz loads automatically on the mobile/TikZJax path). More generally, any `to[...]` segment — including hand-written `to[bend left]` — is now visually editable: the options are preserved verbatim and only the coordinates you drag are rewritten.
+
+**Picture panel** — the **Picture** toolbar button opens the options that belong to the whole `tikzpicture` rather than to one object, so they no longer have to be set on every statement you draw:
+
+| Control | Writes |
+|---------|--------|
+| Align in note | the plugin's `% align=` directive line, with five stops: left, left of centre, centered, right of centre, right |
+| Nudge X | the plugin's `% offset-x=` directive line, in em, shifting the diagram off its alignment |
+| Width in note | the plugin's `% width=` directive line (full width, 90%, 75%, …, or natural size) |
+| Arrow tips | `>=latex`, or `>={Stealth}` / `>={Latex}` / `>={Triangle}` from `arrows.meta` |
+| Line width | `thin`, `thick`, `very thick`, … as a picture-level default |
+| Node font | `every node/.style={font=\Large}` |
+| Scale | `scale=…` (`1` is the identity and is never written out) |
+| Node distance | `node distance=2cm` |
+
+Together they produce exactly the kind of header people retype on every diagram:
+
+```tikz
+\begin{tikzpicture}[>=latex, thick, every node/.style={font=\Large}]
+```
+
+Options the panel does not model — `my style`, `every path/.style`, library keys — are kept verbatim, in their original order, and listed under **Also set** so you can see they are still there. A fence with no `\begin{tikzpicture}` at all is wrapped in one the first time you set a picture option. Alignment and width are written as comment directives, so they are stripped before the source reaches LaTeX and work on both engines.
 
 **Objects panel** — the **Objects** toolbar button opens a list of every statement in the diagram. Tap a row to select it on the canvas, untick its checkbox to hide it (the statement is commented out with a `%~` marker — it stays in your source and in git, but neither compiles nor renders until you tick it back), or delete it outright. Touch-sized rows on mobile.
 
@@ -51,4 +72,4 @@ The intended workflow while writing lecture notes:
 
 **Style panel** — stroke and fill color with shade sliders, fill style (solid / gradients / ball / pattern), line width, solid/dashed/dotted, arrow direction and tip shape, opacity, rounded corners, node text, polygon sides, and freehand smoothing. With a selection it edits the selected objects (existing custom styles like `[my style]` are left intact); with nothing selected it sets the defaults for new objects. **Grid & snapping** — toggle the grid and snapping in the status bar and pick the interval (0.1–2 cm). Snapping works in TikZ coordinates, so snapped points land on exact values like `(1.5, 0.5)`; endpoints and centers of existing objects snap too. The grid is editor-only chrome — it is never written into your source (use the Grid *tool* if you want a real `\draw … grid …;`).
 
-**Mobile** — Edit mode goes near-full-screen with a scrollable toolbar, drawer panels, and safe-area padding; the canvas is a fully interactive SVG. Preview mode's coordinate picking is desktop-only as before, and it never fires while Edit mode is open.
+**Mobile** — Edit mode goes near-full-screen with a scrollable toolbar, drawer panels, and safe-area padding; the canvas is a fully interactive SVG.

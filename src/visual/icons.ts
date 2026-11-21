@@ -58,8 +58,12 @@ export const EDITOR_ICONS = defineIcons({
 	math: [p('M18 5H6l7 7-7 7h12')],
 	plot: [p('M3 3v18h18'), p('M5 17c2.5-9 4.5-9 7-2s4.5 7 7-2')],
 	objects: [p('M12 2l9 5-9 5-9-5z'), p('M3 12l9 5 9-5'), p('M3 17l9 5 9-5')],
-	circuit: [p('M1 12h3l2-5 3 10 3-10 3 10 2-5h6')],
-	'c-resistor': [p('M1 12h3l2-5 3 10 3-10 3 10 2-5h6')],
+	// Seven shallow teeth, symmetric leads: the textbook american zigzag.
+	// Earlier revisions used four, then six, taller teeth and read as a
+	// spike train at toolbar size — the amplitude is now ±2.2 of the
+	// 24-unit box, just over a seventh of the zigzag span.
+	circuit: [p('M1 12h4l1.75 1.8l1.75-3.6l1.75 3.6l1.75-3.6l1.75 3.6l1.75-3.6l1.75 3.6l1.75-1.8h4')],
+	'c-resistor': [p('M1 12h4l1.75 1.8l1.75-3.6l1.75 3.6l1.75-3.6l1.75 3.6l1.75-3.6l1.75 3.6l1.75-1.8h4')],
 	'c-capacitor': [p('M1 12h8M15 12h8M9 5v14M15 5v14')],
 	'c-inductor': [p('M1 12h3M20 12h3'), p('M4 12c0-3.6 5.3-3.6 5.3 0c0-3.6 5.4-3.6 5.4 0c0-3.6 5.3-3.6 5.3 0')],
 	'c-voltage': [
@@ -69,6 +73,24 @@ export const EDITOR_ICONS = defineIcons({
 	'c-current': [
 		{ tag: 'circle', cx: 12, cy: 12, r: 6 },
 		p('M1 12h5M18 12h5M9.5 12h5M12.5 10l2 2-2 2'),
+	],
+	// Dependent (controlled) sources: the rhombus body circuitikz draws for
+	// the `american controlled …` bipoles.
+	'c-dep-voltage': [
+		p('M1 12h4M19 12h4'),
+		p('M5 12L12 6.4L19 12L12 17.6Z'),
+		// Same sign geometry as `c-voltage`, so the independent and dependent
+		// sources read as a pair in the menu.
+		p('M8.2 12h2.4M9.4 10.8v2.4M13.4 12h2.4'),
+	],
+	'c-dep-current': [
+		p('M1 12h4M19 12h4'),
+		p('M5 12L12 6.4L19 12L12 17.6Z'),
+		p('M9.5 12h5M12.5 10l2 2-2 2'),
+	],
+	'c-dep-empty': [
+		p('M1 12h4M19 12h4'),
+		p('M5 12L12 6.4L19 12L12 17.6Z'),
 	],
 	'c-battery': [p('M1 12h4M18 12h5M5 5v14M9 9v6M14 5v14M18 9v6')],
 	'c-cell': [p('M1 12h8M15 12h8M9 5v14M15 9v6')],
@@ -113,6 +135,12 @@ export const EDITOR_ICONS = defineIcons({
 		{ tag: 'circle', cx: 7.5, cy: 10.5, r: 1 },
 		{ tag: 'circle', cx: 12, cy: 7, r: 1 },
 		{ tag: 'circle', cx: 16.5, cy: 10.5, r: 1 },
+	],
+	// Picture options: a framed canvas with its own settings dial.
+	picture: [
+		{ tag: 'rect', x: 3, y: 4, width: 18, height: 14, rx: 2 },
+		p('M3 14l4.5-4.5 3.5 3.5 3-3L21 14'),
+		{ tag: 'circle', cx: 8.5, cy: 8, r: 1.3 },
 	],
 	source: [p('M8 18l-6-6 6-6M16 6l6 6-6 6')],
 	done: [p('M4 12l6 6L20 6')],

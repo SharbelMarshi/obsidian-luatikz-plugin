@@ -281,6 +281,35 @@ await manager.updateFromActiveEditor();
 const previewBody = container.querySelector('.tikzjax-hebrew-local-inline-preview-body');
 assert.ok(previewBody.querySelector('svg, img'), 'compact preview must render output again');
 
+/* --- the compact preview is read-only ------------------------------------------------ */
+
+/*
+ * Clicking the rendered diagram used to insert a `(x, y)` coordinate at the
+ * cursor (and append a `;` to finish a half-written \draw line). The visual
+ * editor replaced that whole workflow, so a click on the preview must leave
+ * the note exactly as it is.
+ */
+{
+	const output = previewBody.querySelector(
+		'.tikzjax-hebrew-local-inline-preview-output, .luatikz-inline-svg-host',
+	);
+	assert.ok(output, 'the compact preview must render a diagram surface');
+	assert.ok(
+		!previewBody.querySelector('.luatikz-pick-surface, .luatikz-pick-mode'),
+		'no coordinate-pick surface is left behind',
+	);
+
+	const before = text();
+	const cursorBefore = editorState.cursor;
+	const transactionsBefore = editorState.transactions.length;
+	for (const type of ['mousedown', 'click', 'mouseup']) {
+		output.dispatchEvent(new window.Event(type, { bubbles: true }));
+	}
+	assert.equal(text(), before, 'clicking the preview must not edit the note');
+	assert.deepEqual(editorState.cursor, cursorBefore, 'clicking the preview must not move the cursor');
+	assert.equal(editorState.transactions.length, transactionsBefore);
+}
+
 /* --- disable() tears edit mode down -------------------------------------------------- */
 
 manager.enterEditMode();

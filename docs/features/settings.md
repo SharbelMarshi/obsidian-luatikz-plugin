@@ -13,4 +13,7 @@
 | Structural lint | Warnings for env/brace/library issues in the editor |
 | Semicolon reminder | Off, hint, or auto-append on Enter |
 | Auto-close brackets | Close `{`, `[`, `(`, `$` while typing |
+| Code block languages | Which fenced languages LuaTikZ renders (default `tikz, luatikz`). Change this when another plugin already owns ```` ```tikz ````; takes effect after Obsidian reloads the plugin |
+| Default alignment | Where diagrams sit in the note (left, left of centre, centered, right of centre, right); a block's own `% align=` wins |
+| Default width | Rendered width of diagrams (`100%`, `420px`, `12cm`, …); a block's own `% width=` wins |
 | Show install notice | One-time environment check on first load |

@@ -3,6 +3,7 @@ import type { LuaTikzSettings } from '../settings/settingsModel';
 import type { RenderImageResult } from '../core/types';
 import type { PreparedTikzSource } from '../core/tikzSource';
 import { applyDiagramAlign } from '../utils/diagramAlign';
+import { applyDiagramOffsetX, applyDiagramWidth } from '../utils/diagramSize';
 import { applyDarkPresentationClass } from '../utils/darkMode';
 import { exportDiagram, type DiagramExportFormat, type ExportableDiagram } from './exportDiagram';
 
@@ -181,7 +182,7 @@ export function presentTikzDiagram(
 	}
 
 	const isDarkTheme = options.isDarkTheme ?? false;
-	const { diagramAlign } = prepared;
+	const { diagramAlign, diagramWidth, diagramOffsetX } = prepared;
 
 	el.empty();
 	const block = el.createDiv({ cls: 'tikzjax-hebrew-local-block luatikz-output-card' });
@@ -192,6 +193,8 @@ export function presentTikzDiagram(
 
 	const container = block.createDiv({ cls: 'tikzjax-hebrew-local-output' });
 	applyDiagramAlign(container, diagramAlign);
+	applyDiagramWidth(container, diagramWidth);
+	applyDiagramOffsetX(container, diagramOffsetX);
 	applyDarkPresentationClass(container, settings.darkModeStyle, isDarkTheme);
 
 	if (svgText && settings.renderEngine === 'tikzjax') {

@@ -3,6 +3,9 @@ export type DarkModeStyle = 'auto-invert' | 'brightness-boost' | 'none';
 
 export type SemicolonReminderMode = 'off' | 'hint' | 'auto-append';
 
+export type DiagramAlignSetting =
+	| 'left' | 'left-center' | 'center' | 'right-center' | 'right';
+
 export interface LuaTikzSettings {
 	renderEngine: LuaTikzRenderEngine;
 	lualatexPath: string;
@@ -24,6 +27,20 @@ export interface LuaTikzSettings {
 	enableStructuralLint: boolean;
 	semicolonReminderMode: SemicolonReminderMode;
 	autoCloseBrackets: boolean;
+	/**
+	 * Code block languages LuaTikZ renders, comma separated. Configurable so
+	 * a vault where another TikZ plugin already owns ```tikz can move this
+	 * one onto its own fence instead of failing to load.
+	 */
+	codeBlockLanguages: string;
+	/** Fallback alignment for blocks with no `% align=` directive. */
+	defaultDiagramAlign: DiagramAlignSetting;
+	/**
+	 * Fallback rendered width for blocks with no `% width=` directive.
+	 * Empty means "natural size"; `100%`, `420px`, `12cm`, … scale the
+	 * diagram to the note's width.
+	 */
+	defaultDiagramWidth: string;
 }
 
 export const DEFAULT_SETTINGS: LuaTikzSettings = {
@@ -45,6 +62,9 @@ export const DEFAULT_SETTINGS: LuaTikzSettings = {
 	enableStructuralLint: true,
 	semicolonReminderMode: 'hint',
 	autoCloseBrackets: true,
+	codeBlockLanguages: 'tikz, luatikz',
+	defaultDiagramAlign: 'center',
+	defaultDiagramWidth: '',
 };
 
 /**
@@ -59,6 +79,8 @@ export const STRING_SETTING_KEYS = [
 	'mainFont',
 	'hebrewFont',
 	'arabicFont',
+	'codeBlockLanguages',
+	'defaultDiagramWidth',
 ] as const;
 
 /**

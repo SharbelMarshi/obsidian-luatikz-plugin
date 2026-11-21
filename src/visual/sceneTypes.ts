@@ -147,6 +147,15 @@ export interface PictureTransform {
 
 export interface ScenePicture {
 	index: number;
+	/** Span of the `\begin{tikzpicture}` token itself (no options). */
+	beginSpan: SourceSpan;
+	/**
+	 * Span of the environment's `[...]` group including the brackets, or
+	 * null when it has none. The picture-options panel rewrites exactly this
+	 * range (or inserts at `beginSpan.to`), so nothing else in the fence
+	 * moves when the picture's defaults change.
+	 */
+	optionsSpan: SourceSpan | null;
 	/** Offset just after `\begin{tikzpicture}` and its options. */
 	bodyFrom: number;
 	/** Offset of `\end{tikzpicture}` (or source end for implicit pictures). */

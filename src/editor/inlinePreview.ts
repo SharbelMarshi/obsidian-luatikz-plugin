@@ -11,7 +11,7 @@ import { clearTikzErrorHighlight } from './tikzErrorHighlight';
 import { clearTikzHoverHighlight, showTikzHoverHighlight } from './tikzHoverHighlight';
 import { showTikzErrorHighlightFromResult } from './editorNavigation';
 import { applyRtlToContainer } from '../utils/rtl';
-import { formatTikzCoordinate, clientPointToTikzCoordinate, applyShiftConstraint, INCOMPLETE_DRAW_LINE_RE, parseLastNumericCoordinate, tikzCoordinateToClient, parseBBoxAttribute, ptToCm } from '../utils/coordinatePick';
+import { clientPointToTikzCoordinate, parseBBoxAttribute, ptToCm } from '../utils/coordinatePick';
 import {
 	buildTikzGeometryMap,
 	findStatementAt,
@@ -19,6 +19,7 @@ import {
 	type TikzGeometryMap,
 } from '../latex/tikzStatementGeometry';
 import { isMobileApp } from '../utils/platform';
+import { isOpenTikzFenceLine } from './tikzFences';
 import { VisualTikzEditor, type VisualEditorHost } from '../visual/visualEditor';
 import { bodyOffsetToPosition } from '../visual/sourcePatches';
 import type { FloatingPreviewMode, SourcePatch } from '../visual/sceneTypes';
@@ -70,7 +71,7 @@ export function getCurrentTikzBlock(editor: Editor): TikzBlock | null {
 
 	for (let line = cursor.line; line >= 0; line--) {
 		const text = editor.getLine(line).trim();
-		if (text.startsWith('```tikz') || text.startsWith('```luatikz')) {
+		if (isOpenTikzFenceLine(text)) {
 			startLine = line;
 			break;
 		}
@@ -110,7 +111,7 @@ function revalidateTikzBlock(editor: Editor, block: TikzBlock): TikzBlock | null
 		return null;
 	}
 	const open = editor.getLine(block.startLine).trim();
-	if (!open.startsWith('```tikz') && !open.startsWith('```luatikz')) {
+	if (!isOpenTikzFenceLine(open)) {
 		return null;
 	}
 	if (editor.getLine(block.endLine).trim() !== '```') {
@@ -161,7 +162,6 @@ export class InlinePreviewManager {
 	private lastRenderSource: string | null = null;
 	private pinnedBlock: TikzBlock | null = null;
 	private pinnedFilePath: string | null = null;
-	private savedInsertCursor: EditorPosition | null = null;
 	private previewInteractionActive = false;
 	private renderToken = 0;
 	private previewWidth = DEFAULT_PREVIEW_WIDTH;
@@ -195,7 +195,6 @@ export class InlinePreviewManager {
 		this.lastRenderSource = null;
 		this.pinnedBlock = null;
 		this.pinnedFilePath = null;
-		this.savedInsertCursor = null;
 		this.previewInteractionActive = false;
 		this.clearTimer();
 		this.hide();
@@ -268,7 +267,7 @@ export class InlinePreviewManager {
 			return;
 		}
 
-		const prepared = prepareTikzBlock(block.source);
+		const prepared = prepareTikzBlock(block.source, this.getSettings());
 		if (!prepared.renderSource.trim()) {
 			this.showMessage(view, 'Nothing to render.');
 			return;
@@ -336,7 +335,6 @@ export class InlinePreviewManager {
 	private clearPin(): void {
 		this.pinnedBlock = null;
 		this.pinnedFilePath = null;
-		this.savedInsertCursor = null;
 		this.lastRenderSource = null;
 		this.previewInteractionActive = false;
 	}
@@ -346,7 +344,6 @@ export class InlinePreviewManager {
 		if (current) {
 			this.pinnedBlock = current;
 			this.pinnedFilePath = view.file?.path ?? null;
-			this.savedInsertCursor = view.editor.getCursor();
 			return current;
 		}
 		if (!this.pinnedBlock || view.file?.path !== this.pinnedFilePath) {
@@ -525,16 +522,22 @@ export class InlinePreviewManager {
 		this.editButton = button;
 	}
 
+	/**
+	 * Pressing inside the diagram keeps the preview pinned for the duration
+	 * of the gesture, so a drag that leaves the editor focused elsewhere does
+	 * not tear the preview down mid-interaction.
+	 *
+	 * This used to be where click-to-insert-a-coordinate lived: a click wrote
+	 * `(x, y)` at the cursor and even appended a `;` to finish a half-written
+	 * \draw line. The visual editor does all of that directly on the canvas
+	 * now, so the preview is a preview — clicking it no longer edits the note.
+	 */
 	private attachPreviewInteractionHandlers(container: HTMLElement): void {
 		container.addEventListener('mousedown', (event) => {
-			if (this.mode === 'edit' || !this.isPickSurfaceEvent(event)) {
+			if (this.mode === 'edit' || !this.isDiagramSurfaceEvent(event)) {
 				return;
 			}
 			this.previewInteractionActive = true;
-			const view = this.getViewForPreview();
-			if (view) {
-				this.prepareCoordinatePick(view);
-			}
 			const onUp = () => {
 				this.previewInteractionActive = false;
 				window.removeEventListener('mouseup', onUp);
@@ -544,28 +547,12 @@ export class InlinePreviewManager {
 		});
 	}
 
-	private isPickSurfaceEvent(event: Event): boolean {
+	private isDiagramSurfaceEvent(event: Event): boolean {
 		const target = event.target;
 		if (!(target instanceof HTMLElement)) {
 			return false;
 		}
-		return !!target.closest('.luatikz-pick-surface, .luatikz-inline-svg-host');
-	}
-
-	/** Append trailing semicolon on incomplete \\draw lines; keep cursor for coordinate insert. */
-	private prepareCoordinatePick(view: MarkdownView): void {
-		const editor = view.editor;
-		const cursor = this.savedInsertCursor ?? editor.getCursor();
-		const lineText = editor.getLine(cursor.line);
-		if (!INCOMPLETE_DRAW_LINE_RE.test(lineText.trim())) {
-			this.savedInsertCursor = cursor;
-			editor.setCursor(cursor);
-			return;
-		}
-		const lineEnd = { line: cursor.line, ch: lineText.length };
-		editor.replaceRange(';', lineEnd, lineEnd);
-		this.savedInsertCursor = cursor;
-		editor.setCursor(cursor);
+		return !!target.closest('.luatikz-preview-surface, .luatikz-inline-svg-host');
 	}
 
 	private showOutput(view: MarkdownView, diagramAlign: DiagramAlign = 'center'): void {
@@ -604,7 +591,7 @@ export class InlinePreviewManager {
 		const settings = this.getSettings();
 		const body = this.previewBody(view);
 		body.empty();
-		body.removeClass('luatikz-pick-mode');
+		body.removeClass('luatikz-preview-fill');
 		const output = body.createDiv({
 			cls: 'tikzjax-hebrew-local-output tikzjax-hebrew-local-inline-preview-output',
 		});
@@ -620,9 +607,9 @@ export class InlinePreviewManager {
 		const settings = this.getSettings();
 		const body = this.previewBody(view);
 		body.empty();
-		body.addClass('luatikz-pick-mode');
+		body.addClass('luatikz-preview-fill');
 		const output = body.createDiv({
-			cls: 'tikzjax-hebrew-local-output tikzjax-hebrew-local-inline-preview-output luatikz-pick-surface',
+			cls: 'tikzjax-hebrew-local-output tikzjax-hebrew-local-inline-preview-output luatikz-preview-surface',
 		});
 		applyDiagramAlign(output, diagramAlign);
 		applyDarkPresentationClass(output, settings.darkModeStyle, this.isDarkTheme());
@@ -639,64 +626,12 @@ export class InlinePreviewManager {
 		svgEl.setAttribute('height', '100%');
 		svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
-		const host = output.createDiv({ cls: 'luatikz-inline-svg-host luatikz-pick-mode' });
+		const host = output.createDiv({ cls: 'luatikz-inline-svg-host' });
 		host.appendChild(svgEl);
+		// Hovering still highlights the statement under the pointer in the
+		// note — read-only, unlike the coordinate picker it replaced.
 		this.attachHoverHighlight(host, svgEl);
 
-		const handlePick = (event: MouseEvent) => {
-			event.preventDefault();
-			event.stopPropagation();
-
-			const picked = clientPointToTikzCoordinate(svgEl, event.clientX, event.clientY);
-			if (!picked) {
-				return;
-			}
-
-			const block = this.resolveBlock(view);
-			const insertAt = this.savedInsertCursor ?? view.editor.getCursor();
-
-			let coord = picked;
-			if (event.shiftKey && block) {
-				const textBefore = view.editor.getRange(
-					{ line: block.startLine + 1, ch: 0 },
-					insertAt,
-				);
-				const anchor = parseLastNumericCoordinate(textBefore);
-				const anchorClient = anchor ? tikzCoordinateToClient(svgEl, anchor) : null;
-				if (anchor && anchorClient) {
-					coord = applyShiftConstraint(
-						picked,
-						anchor,
-						{ x: event.clientX, y: event.clientY },
-						anchorClient,
-					);
-				}
-			}
-
-			const formatted = formatTikzCoordinate(coord);
-
-			view.editor.replaceRange(formatted, insertAt, insertAt);
-			const afterInsert = {
-				line: insertAt.line,
-				ch: insertAt.ch + formatted.length,
-			};
-			this.savedInsertCursor = afterInsert;
-			view.editor.setCursor(afterInsert);
-			view.editor.focus();
-
-			const suffix = event.shiftKey ? ' (axis constrained)' : '';
-			new Notice(`Inserted ${formatted}${suffix} — approximate TikZ cm`);
-		};
-
-		output.addEventListener('mousedown', (event) => {
-			event.preventDefault();
-			this.prepareCoordinatePick(view);
-			if (this.savedInsertCursor) {
-				view.editor.setCursor(this.savedInsertCursor);
-			}
-		});
-
-		output.addEventListener('click', handlePick);
 	}
 
 	private getGeometryMap(blockSource: string): TikzGeometryMap {
@@ -817,7 +752,7 @@ export class InlinePreviewManager {
 
 		const body = this.previewBody(view);
 		body.empty();
-		body.removeClass('luatikz-pick-mode');
+		body.removeClass('luatikz-preview-fill');
 
 		this.visualEditor = new VisualTikzEditor(this.buildVisualHost(), body, block.source);
 		applyDarkPresentationClass(
@@ -911,7 +846,7 @@ export class InlinePreviewManager {
 			return;
 		}
 		const open = editor.getLine(startLine).trim();
-		if (!open.startsWith('```tikz') && !open.startsWith('```luatikz')) {
+		if (!isOpenTikzFenceLine(open)) {
 			return;
 		}
 		for (let line = startLine + 1; line < editor.lineCount(); line++) {
@@ -1094,7 +1029,7 @@ export class InlinePreviewManager {
 			this.visualEditor?.syncFromBlock(block);
 		}
 
-		const prepared = prepareTikzBlock(block.source);
+		const prepared = prepareTikzBlock(block.source, this.getSettings());
 		if (!prepared.renderSource.trim()) {
 			if (this.mode === 'edit') {
 				this.visualEditor?.setCompileResult(null, false);

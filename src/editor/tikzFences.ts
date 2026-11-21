@@ -6,8 +6,71 @@ import type { EditorView } from '@codemirror/view';
  * tikzFenceStarter, tikzStructuralLint, plus two variants in
  * latexAutocomplete), and the block scanner was duplicated byte-for-byte
  * between tikzIdeGutter and tikzStructuralLint.
+ *
+ * The language list is configurable (Settings → Code block languages), so a
+ * vault where another plugin already owns ```tikz can move LuaTikZ onto its
+ * own fence. Everything below reads the list through the accessors rather
+ * than hardcoding it, and `setTikzFenceLanguages` is the single writer.
  */
-export const OPEN_FENCE_RE = /^```(?:tikz|luatikz)\b.*$/;
+
+/** Shipped default; also the fallback when the configured list is empty. */
+export const DEFAULT_TIKZ_FENCE_LANGUAGES: readonly string[] = ['tikz', 'luatikz'];
+
+/** Non-tikz fences the completion source also serves. */
+const EXTRA_LATEX_FENCE_LANGUAGES: readonly string[] = ['latex', 'lualatex', 'tex'];
+
+/** A language token Obsidian will accept after ``` (and a safe regex atom). */
+const LANGUAGE_TOKEN_RE = /^[a-z0-9][a-z0-9_+-]*$/;
+
+/**
+ * Clean a user-entered list ("tikz, luatikz" / newline separated) into
+ * registrable language names: lowercased, de-duplicated, backticks and other
+ * separators dropped. Returns the shipped defaults when nothing survives, so
+ * a blank setting can never leave the plugin with no code block at all.
+ */
+export function normalizeFenceLanguages(raw: string): string[] {
+	const seen = new Set<string>();
+	for (const part of raw.split(/[\s,;|]+/)) {
+		const name = part.replace(/`/g, '').trim().toLowerCase();
+		if (name && LANGUAGE_TOKEN_RE.test(name)) {
+			seen.add(name);
+		}
+	}
+	return seen.size ? [...seen] : [...DEFAULT_TIKZ_FENCE_LANGUAGES];
+}
+
+let tikzLanguages: string[] = [...DEFAULT_TIKZ_FENCE_LANGUAGES];
+let openFenceRe = buildOpenFenceRe(tikzLanguages);
+
+function buildOpenFenceRe(languages: readonly string[]): RegExp {
+	// Names are validated by normalizeFenceLanguages, so no escaping is
+	// needed — but the alternation is still built from the live list only.
+	return new RegExp(`^\`\`\`(?:${languages.join('|')})\\b.*$`);
+}
+
+/** Install the configured list; every accessor below follows immediately. */
+export function setTikzFenceLanguages(languages: readonly string[]): void {
+	tikzLanguages = languages.length ? [...languages] : [...DEFAULT_TIKZ_FENCE_LANGUAGES];
+	openFenceRe = buildOpenFenceRe(tikzLanguages);
+}
+
+export function tikzFenceLanguages(): readonly string[] {
+	return tikzLanguages;
+}
+
+/** The language a newly inserted fence is written with. */
+export function primaryTikzFenceLanguage(): string {
+	return tikzLanguages[0] ?? DEFAULT_TIKZ_FENCE_LANGUAGES[0];
+}
+
+export function latexFenceLanguages(): readonly string[] {
+	return [...tikzLanguages, ...EXTRA_LATEX_FENCE_LANGUAGES];
+}
+
+/** True when `trimmedLine` opens a LuaTikZ fence. */
+export function isOpenTikzFenceLine(trimmedLine: string): boolean {
+	return openFenceRe.test(trimmedLine);
+}
 
 export interface FencedBlockRange {
 	/** Document offset of the first content character. */
@@ -21,14 +84,6 @@ export interface FencedBlockRange {
 	/** Block body exactly as sliced from the document. */
 	source: string;
 }
-
-/**
- * The fence languages an extension cares about. The completion source
- * deliberately accepts plain LaTeX fences as well; everything else is
- * tikz-only. Kept as an explicit parameter so that divergence stays visible.
- */
-export const TIKZ_FENCE_LANGUAGES = ['tikz', 'luatikz'] as const;
-export const LATEX_FENCE_LANGUAGES = ['tikz', 'luatikz', 'latex', 'lualatex', 'tex'] as const;
 
 /**
  * The 1-based line number of the open fence enclosing `pos`, or null.
@@ -65,8 +120,8 @@ export function enclosingFenceLine(
 }
 
 /**
- * Content ranges of every closed ```tikz / ```luatikz fence, in document
- * order. Fences without content (open + close on adjacent lines) are skipped.
+ * Content ranges of every closed LuaTikZ fence, in document order. Fences
+ * without content (open + close on adjacent lines) are skipped.
  */
 export function findFencedTikzRanges(doc: EditorView['state']['doc']): FencedBlockRange[] {
 	const ranges: FencedBlockRange[] = [];
@@ -76,7 +131,7 @@ export function findFencedTikzRanges(doc: EditorView['state']['doc']): FencedBlo
 		const trimmed = doc.line(lineNumber).text.trim();
 
 		if (openLine === null) {
-			if (OPEN_FENCE_RE.test(trimmed)) {
+			if (isOpenTikzFenceLine(trimmed)) {
 				openLine = lineNumber;
 			}
 			continue;

@@ -1,6 +1,6 @@
 import { tidyTikzSource } from '../core/tikzSource';
-import { containsRtlText } from '../utils/guards';
 import { containsRtlMacro } from '../utils/rtlDetection';
+import { extractRtlRuns, TIKZJAX_RTL_RAW_MACRO, type RtlRun } from './tikzJaxRtl';
 
 export type TikzJaxInputMode = 'bare-tikzpicture' | 'full-document' | 'raw';
 
@@ -16,6 +16,11 @@ export interface TikzJaxNormalizedInput {
 	hebrewNote?: string;
 	usesPgfplots: boolean;
 	isAdvancedPgfplots: boolean;
+	/**
+	 * Hebrew/Arabic runs lifted out of the body. TeX only reserves space for
+	 * them; the renderer writes the text into the finished SVG.
+	 */
+	rtlRuns: RtlRun[];
 }
 
 const LUALATEX_ONLY_PATTERNS: RegExp[] = [
@@ -49,8 +54,11 @@ const PGFLOTS_BODY_MARKERS = [
 const DEFAULT_PGFLOTS_COMPAT = '\\pgfplotsset{compat=1.16}';
 
 const TIKZJAX_RTL_FALLBACK_MACROS = [
+	// Still defined so a `\he{ok}` holding no RTL text keeps working, and a
+	// stray macro degrades to its content rather than erroring out.
 	'\\newcommand{\\he}[1]{#1}',
 	'\\newcommand{\\ar}[1]{#1}',
+	TIKZJAX_RTL_RAW_MACRO,
 ].join('\n');
 
 function clampPgfplotsCompatLine(line: string): string {
@@ -85,18 +93,7 @@ function stripPatterns(source: string, patterns: RegExp[]): string {
 	return cleaned;
 }
 
-/** TikZJax cannot shape RTL Unicode; keep macros defined but drop RTL glyph content at render time. */
-function sanitizeRtlMacroContentForTikzJax(source: string): string {
-	return source
-		.replace(/\\he\{([^}]*)\}/g, (match, content: string) =>
-			containsRtlText(content) ? '\\he{}' : match)
-		.replace(/\\ar\{([^}]*)\}/g, (match, content: string) =>
-			containsRtlText(content) ? '\\ar{}' : match)
-		.replace(/\\texthebrew\{([^}]*)\}/g, (match, content: string) =>
-			containsRtlText(content) ? '\\texthebrew{}' : match)
-		.replace(/\\textarabic\{([^}]*)\}/g, (match, content: string) =>
-			containsRtlText(content) ? '\\textarabic{}' : match);
-}
+
 
 function normalizeOhmCommands(source: string): string {
 	return source.replace(/\\ohm\b/g, '\\Omega ');
@@ -257,7 +254,8 @@ function buildRenderPayload(
 		extraPreamble?: string;
 		usesRtlMacros?: boolean;
 	},
-): Pick<TikzJaxNormalizedInput, 'tex' | 'renderTex' | 'texPackages' | 'tikzLibraries' | 'addToPreamble'> {
+): Pick<TikzJaxNormalizedInput,
+	'tex' | 'renderTex' | 'texPackages' | 'tikzLibraries' | 'addToPreamble' | 'rtlRuns'> {
 	const texPackages: Record<string, string> = {
 		tikz: '',
 		amsmath: '',
@@ -295,18 +293,23 @@ function buildRenderPayload(
 	}
 	const tikzLibraries = [...new Set(libraryNames)].join(',');
 
-	const renderBody = options.usesRtlMacros ? sanitizeRtlMacroContentForTikzJax(body) : body;
+	// TeX only reserves space for RTL runs; the text itself is written into
+	// the finished SVG, where a real font can set it.
+	const extracted = options.usesRtlMacros
+		? extractRtlRuns(body)
+		: { body, runs: [] as RtlRun[] };
 
 	return {
 		tex: buildStandaloneDocument(body, options),
 		renderTex: [
 			'\\begin{document}',
-			renderBody.trim(),
+			extracted.body.trim(),
 			'\\end{document}',
 		].join('\n'),
 		texPackages,
 		tikzLibraries,
 		addToPreamble: addToPreambleParts.join('\n'),
+		rtlRuns: extracted.runs,
 	};
 }
 
@@ -439,7 +442,8 @@ export function normalizeForTikzJax(source: string, extraPreamble = ''): TikzJax
 	const isAdvancedPgfplots = isAdvancedPgfplotsDiagram(ligatureSafe);
 
 	let mode: TikzJaxInputMode;
-	let payload: Pick<TikzJaxNormalizedInput, 'tex' | 'renderTex' | 'texPackages' | 'tikzLibraries' | 'addToPreamble'>;
+	let payload: Pick<TikzJaxNormalizedInput,
+		'tex' | 'renderTex' | 'texPackages' | 'tikzLibraries' | 'addToPreamble' | 'rtlRuns'>;
 
 	if (/\\documentclass/.test(tidied) && /\\begin\{document\}/.test(tidied)) {
 		mode = 'full-document';
@@ -485,7 +489,9 @@ export function normalizeForTikzJax(source: string, extraPreamble = ''): TikzJax
 		usesPgfplots,
 		isAdvancedPgfplots,
 		hebrewNote: usesRtlMacros
-			? 'RTL \\he{...} and \\ar{...} macros use a limited TikZJax fallback. Use Local LuaLaTeX for real Hebrew or Arabic text shaping.'
+			? 'RTL \\he{...} and \\ar{...} text is drawn into the SVG with a system font rather than shaped by TeX, '
+				+ 'so its width is approximate and a rotated or scaled picture does not carry it. '
+				+ 'Use Local LuaLaTeX for real Hebrew or Arabic shaping.'
 			: undefined,
 	};
 }

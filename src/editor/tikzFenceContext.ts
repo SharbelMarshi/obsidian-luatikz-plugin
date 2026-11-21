@@ -1,9 +1,9 @@
 import type { EditorView } from '@codemirror/view';
-import { TIKZ_FENCE_LANGUAGES, enclosingFenceLine } from './tikzFences';
+import { tikzFenceLanguages, enclosingFenceLine } from './tikzFences';
 
 /** True when `pos` is inside an open ```tikz / ```luatikz fence (before closing ```). */
 export function isInsideTikzFence(doc: EditorView['state']['doc'], pos: number): boolean {
-	return enclosingFenceLine(doc, pos, TIKZ_FENCE_LANGUAGES) !== null;
+	return enclosingFenceLine(doc, pos, tikzFenceLanguages()) !== null;
 }
 
 /**

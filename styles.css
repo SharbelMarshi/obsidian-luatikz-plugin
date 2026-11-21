@@ -17,6 +17,11 @@
 
 /* --- Plugin render blocks: frameless Obsidian code-block wrapper --- */
 
+/* `.luatikz-render-wrapper` is added by the plugin itself, so these rules
+   follow the configured code block languages instead of a hardcoded pair. */
+.markdown-reading-view .luatikz-render-wrapper,
+.markdown-preview-view .luatikz-render-wrapper,
+.markdown-rendered .luatikz-render-wrapper,
 .markdown-reading-view .block-language-tikz.luatikz-render-wrapper,
 .markdown-reading-view .block-language-luatikz.luatikz-render-wrapper,
 .markdown-preview-view .block-language-tikz.luatikz-render-wrapper,
@@ -115,6 +120,8 @@
 
 .tikzjax-hebrew-local-output > *,
 .tikzjax-hebrew-local-block > *,
+.luatikz-render-wrapper .luatikz-output-card > *,
+.luatikz-render-wrapper .tikzjax-hebrew-local-output.luatikz-glass-card > *,
 .block-language-tikz .luatikz-output-card > *,
 .block-language-luatikz .luatikz-output-card > *,
 .block-language-tikz .tikzjax-hebrew-local-output.luatikz-glass-card > *,
@@ -278,6 +285,12 @@
   border-top: none;
 }
 
+.markdown-reading-view .luatikz-render-wrapper img.tikzjax-hebrew-local-image,
+.markdown-preview-view .luatikz-render-wrapper img.tikzjax-hebrew-local-image,
+.markdown-rendered .luatikz-render-wrapper img.tikzjax-hebrew-local-image,
+.markdown-reading-view .luatikz-render-wrapper .luatikz-tikzjax-host,
+.markdown-preview-view .luatikz-render-wrapper .luatikz-tikzjax-host,
+.markdown-rendered .luatikz-render-wrapper .luatikz-tikzjax-host,
 .markdown-reading-view .block-language-tikz.luatikz-render-wrapper img.tikzjax-hebrew-local-image,
 .markdown-reading-view .block-language-luatikz.luatikz-render-wrapper img.tikzjax-hebrew-local-image,
 .markdown-preview-view .block-language-tikz.luatikz-render-wrapper img.tikzjax-hebrew-local-image,
@@ -339,11 +352,74 @@
   justify-content: flex-end;
 }
 
+/* Quarter stops. Two flexible spacers share the free space 1:3 (or 3:1), so
+   the diagram lands a quarter of the way in — and because they only ever
+   consume *free* space, a diagram too wide to fit collapses them to zero
+   instead of overflowing the note. */
+.luatikz-diagram-align-left-center,
+.luatikz-diagram-align-right-center {
+  justify-content: flex-start;
+}
+
+.luatikz-diagram-align-left-center::before,
+.luatikz-diagram-align-left-center::after,
+.luatikz-diagram-align-right-center::before,
+.luatikz-diagram-align-right-center::after {
+  content: '';
+  flex-basis: 0;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.luatikz-diagram-align-left-center::before,
+.luatikz-diagram-align-right-center::after {
+  flex-grow: 1;
+}
+
+.luatikz-diagram-align-left-center::after,
+.luatikz-diagram-align-right-center::before {
+  flex-grow: 3;
+}
+
 .tikzjax-hebrew-local-output .tikzjax-hebrew-local-image,
 .tikzjax-hebrew-local-output .luatikz-tikzjax-host {
   width: auto;
   max-width: 100%;
   flex: 0 0 auto;
+}
+
+/* `% width=100%` (or the vault default): scale the finished diagram to the
+   note column instead of leaving it at its absolute LaTeX size. */
+.tikzjax-hebrew-local-output.luatikz-diagram-sized .tikzjax-hebrew-local-image,
+.tikzjax-hebrew-local-output.luatikz-diagram-sized .luatikz-tikzjax-host,
+.tikzjax-hebrew-local-output.luatikz-diagram-sized .luatikz-tikzjax-host > svg,
+.markdown-reading-view .tikzjax-hebrew-local-output.luatikz-diagram-sized .tikzjax-hebrew-local-image,
+.markdown-preview-view .tikzjax-hebrew-local-output.luatikz-diagram-sized .tikzjax-hebrew-local-image,
+.markdown-rendered .tikzjax-hebrew-local-output.luatikz-diagram-sized .tikzjax-hebrew-local-image,
+.markdown-reading-view .tikzjax-hebrew-local-output.luatikz-diagram-sized .luatikz-tikzjax-host > svg,
+.markdown-preview-view .tikzjax-hebrew-local-output.luatikz-diagram-sized .luatikz-tikzjax-host > svg,
+.markdown-rendered .tikzjax-hebrew-local-output.luatikz-diagram-sized .luatikz-tikzjax-host > svg {
+  width: var(--luatikz-diagram-width, auto);
+  max-width: 100%;
+  height: auto;
+}
+
+/* A sized diagram must not keep the flex container's horizontal scroll: the
+   whole point is that it already fits. */
+.tikzjax-hebrew-local-output.luatikz-diagram-sized {
+  overflow-x: visible;
+}
+
+/* `% offset-x=-3`: nudge the diagram sideways from wherever its alignment
+   put it. A transform, not a margin, so the alignment's own layout — and the
+   quarter-stop spacers in particular — is left exactly as it was. */
+.tikzjax-hebrew-local-output.luatikz-diagram-nudged > .tikzjax-hebrew-local-image,
+.tikzjax-hebrew-local-output.luatikz-diagram-nudged > .luatikz-tikzjax-host {
+  transform: translateX(var(--luatikz-diagram-offset-x, 0));
+}
+
+.tikzjax-hebrew-local-output.luatikz-diagram-nudged {
+  overflow-x: visible;
 }
 
 .markdown-reading-view .tikzjax-hebrew-local-block,
@@ -572,7 +648,7 @@
   box-shadow: none;
 }
 
-.tikzjax-hebrew-local-inline-preview-body.luatikz-pick-mode {
+.tikzjax-hebrew-local-inline-preview-body.luatikz-preview-fill {
   padding: 0;
   overflow: hidden;
 }
@@ -592,10 +668,6 @@
   justify-content: stretch;
 }
 
-.tikzjax-hebrew-local-inline-preview-output.luatikz-pick-surface {
-  cursor: crosshair;
-}
-
 .tikzjax-hebrew-local-inline-preview-output.luatikz-diagram-align-left {
   justify-content: flex-start;
 }
@@ -606,6 +678,11 @@
 
 .tikzjax-hebrew-local-inline-preview-output.luatikz-diagram-align-right {
   justify-content: flex-end;
+}
+
+.tikzjax-hebrew-local-inline-preview-output.luatikz-diagram-align-left-center,
+.tikzjax-hebrew-local-inline-preview-output.luatikz-diagram-align-right-center {
+  justify-content: flex-start;
 }
 
 .tikzjax-hebrew-local-inline-preview-image {
@@ -754,10 +831,6 @@
   height: 100%;
   max-width: 100%;
   max-height: 100%;
-}
-
-.luatikz-inline-svg-host.luatikz-pick-mode {
-  cursor: crosshair;
 }
 
 /* ==========================================================================
@@ -1129,6 +1202,25 @@ button.luatikz-ve-minicolor-clear {
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
+}
+
+/* Picture panel: same chrome as the Style panel, plus the read-only list of
+   tikzpicture options the panel itself does not model. */
+.luatikz-ve-picture-extra {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: 0.74em;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+.luatikz-ve-picture-extra code {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.95em;
+  background: transparent;
+  padding: 0;
 }
 
 .luatikz-ve-source {

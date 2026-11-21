@@ -1,4 +1,5 @@
 import { App, Modal, Setting } from 'obsidian';
+import { primaryTikzFenceLanguage } from '../editor/tikzFences';
 import { cheatSheetEntries, TIKZ_TEMPLATE_CATALOG } from '../latex/tikzSnippets';
 import type { MarkdownView } from 'obsidian';
 import { getCurrentTikzBlock } from '../editor/inlinePreview';
@@ -107,7 +108,7 @@ export function insertAtCursorInTikzBlock(view: MarkdownView, text: string): voi
 		return;
 	}
 
-	const fence = '```tikz\n';
+	const fence = `\`\`\`${primaryTikzFenceLanguage()}\n`;
 	editor.replaceSelection(`${fence}${text}\n\`\`\``);
 }
 

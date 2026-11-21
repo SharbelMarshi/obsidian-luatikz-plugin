@@ -102,6 +102,44 @@ import {
 	type StyleEdit,
 } from './tikzOptions';
 import {
+	applyPictureOptionEdit,
+	formatPictureOptionGroup,
+	parsePictureOptions,
+	PICTURE_ARROW_TIPS,
+	PICTURE_FONT_SIZES,
+	PICTURE_LINE_WIDTHS,
+	type PictureArrowTip,
+	type PictureFontSize,
+	type PictureLineWidth,
+	type PictureOptionEdit,
+} from './pictureOptions';
+import {
+	alignDirectiveSpan,
+	formatAlignDirective,
+	parseDiagramAlign,
+	type DiagramAlign,
+} from '../utils/diagramAlign';
+
+import {
+	formatOffsetXDirective,
+	formatWidthDirective,
+	normalizeDiagramOffsetX,
+	normalizeDiagramWidth,
+	offsetXDirectiveSpan,
+	parseDiagramOffsetX,
+	parseDiagramWidth,
+	widthDirectiveSpan,
+} from '../utils/diagramSize';
+
+/** The five alignment stops, in reading order left → right. */
+const DIAGRAM_ALIGN_LABELS: ReadonlyArray<[DiagramAlign, string]> = [
+	['left', 'Left'],
+	['left-center', 'Left of centre'],
+	['center', 'Centered'],
+	['right-center', 'Right of centre'],
+	['right', 'Right'],
+];
+import {
 	applyColorShade,
 	hexToTikzColor,
 	rgbToHex,
@@ -130,6 +168,7 @@ import type {
 	SceneNodeObject,
 	SceneObject,
 	ScenePathObject,
+	ScenePicture,
 	ShadingKind,
 	SourcePatch,
 	TikzScene,
@@ -199,6 +238,23 @@ const SHAPE_TOOL_BUTTONS: ToolButtonSpec[] = [
 ];
 
 
+/**
+ * Rendered-width presets for the Picture panel. A width the fence already
+ * carries but that is not in this list (`420px`, `12cm`) is added to the
+ * select at refresh time, so hand-written directives stay visible and
+ * selectable instead of silently snapping to the nearest preset.
+ */
+const PICTURE_WIDTH_PRESETS: ReadonlyArray<[string, string]> = [
+	['', 'Natural size'],
+	['100%', 'Full width (100%)'],
+	['90%', '90%'],
+	['75%', '75%'],
+	['60%', '60%'],
+	['50%', 'Half width (50%)'],
+	['40%', '40%'],
+	['25%', '25%'],
+];
+
 /** One entry of the Circuit components menu. */
 interface CircuitComponentSpec {
 	id: string;
@@ -223,6 +279,12 @@ const CIRCUIT_COMPONENTS: CircuitComponentSpec[] = [
 	// The single-cell form: long/short plates.
 	{ id: 'voltage-cell', label: 'Voltage source (cell)', bipole: 'battery1', icon: 'c-cell' },
 	{ id: 'current-source', label: 'Current source', bipole: 'american current source', icon: 'c-current' },
+	// Dependent (controlled) sources: the american rhombus bodies, the form
+	// every circuits course draws for a source whose value depends on
+	// another branch's voltage or current.
+	{ id: 'dep-voltage-source', label: 'Dependent voltage source', bipole: 'american controlled voltage source', icon: 'c-dep-voltage' },
+	{ id: 'dep-current-source', label: 'Dependent current source', bipole: 'american controlled current source', icon: 'c-dep-current' },
+	{ id: 'dep-empty-source', label: 'Dependent source (blank)', bipole: 'empty controlled source', icon: 'c-dep-empty' },
 	{ id: 'battery', label: 'Battery', bipole: 'battery', icon: 'c-battery' },
 	{ id: 'diode', label: 'Diode', bipole: 'D*', icon: 'c-diode' },
 	{ id: 'led', label: 'LED', bipole: 'empty led', icon: 'c-led' },
@@ -435,6 +497,18 @@ export class VisualTikzEditor {
 	/** Snapped cursor position while the circuit tool hovers the canvas. */
 	private circuitHover: TikzCoordinate | null = null;
 	private propsPanel!: HTMLElement;
+	private picturePanel!: HTMLElement;
+	private pictureControls: {
+		align?: HTMLSelectElement;
+		offsetX?: HTMLInputElement;
+		width?: HTMLSelectElement;
+		arrowTip?: HTMLSelectElement;
+		lineWidth?: HTMLSelectElement;
+		nodeFont?: HTMLSelectElement;
+		scale?: HTMLInputElement;
+		nodeDistance?: HTMLInputElement;
+		extra?: HTMLElement;
+	} = {};
 	private objectsPanel!: HTMLElement;
 	private objectsList!: HTMLElement;
 	private sourcePanel!: HTMLElement;
@@ -478,6 +552,7 @@ export class VisualTikzEditor {
 		this.root = this.buildDom(container);
 		this.setTool('select');
 		this.togglePanel('props', false);
+		this.togglePanel('picture', false);
 		this.togglePanel('objects', false);
 		this.togglePanel('source', false);
 		this.router = new GestureRouter(this.buildGestureHost(), {
@@ -577,6 +652,7 @@ export class VisualTikzEditor {
 		this.button(actionGroup, 'Duplicate', 'luatikz-ve-duplicate', () => this.duplicateSelection(), { icon: 'duplicate', title: 'Duplicate selection (Ctrl/Cmd+D)' });
 		this.button(actionGroup, 'Delete', 'luatikz-ve-delete', () => this.deleteSelection(), { icon: 'delete', title: 'Delete selection (Del)' });
 		this.button(actionGroup, 'Style', 'luatikz-ve-props-toggle', () => this.togglePanel('props'), { toggle: true, icon: 'style', title: 'Style panel' });
+		this.button(actionGroup, 'Picture', 'luatikz-ve-picture-toggle', () => this.togglePanel('picture'), { toggle: true, icon: 'picture', title: 'Picture options (tikzpicture defaults, alignment)' });
 		this.button(actionGroup, 'Objects', 'luatikz-ve-objects-toggle', () => this.togglePanel('objects'), { toggle: true, icon: 'objects', title: 'Objects panel' });
 		this.button(actionGroup, 'Source', 'luatikz-ve-source-toggle', () => this.togglePanel('source'), { toggle: true, icon: 'source', title: 'TikZ source panel' });
 		this.button(actionGroup, 'Done', 'luatikz-ve-done mod-cta', () => this.host.requestExit(), { title: 'Return to preview (Done)' });
@@ -587,6 +663,10 @@ export class VisualTikzEditor {
 		this.propsPanel = this.el('div', 'luatikz-ve-props', main);
 		this.propsPanel.setAttribute('aria-label', 'Style and properties');
 		this.buildPropsPanel();
+
+		this.picturePanel = this.el('div', 'luatikz-ve-props luatikz-ve-picture', main);
+		this.picturePanel.setAttribute('aria-label', 'Picture options');
+		this.buildPicturePanel();
 
 		this.canvasWrap = this.el('div', 'luatikz-ve-canvas-wrap', main);
 		this.svg = svgEl(this.doc, 'svg', {
@@ -1221,6 +1301,264 @@ export class VisualTikzEditor {
 	}
 
 	/* ---------------------------------------------------------------------- */
+	/* picture panel                                                           */
+	/* ---------------------------------------------------------------------- */
+
+	/**
+	 * Options that belong to the whole picture rather than one object: the
+	 * `\begin{tikzpicture}[...]` defaults every diagram ends up retyping
+	 * (`>=latex`, `thick`, `every node/.style={font=\Large}`, `scale=`) plus
+	 * where the finished image sits in the note.
+	 */
+	private buildPicturePanel(): void {
+		const panel = this.picturePanel;
+		this.el('div', 'luatikz-ve-props-title', panel).textContent = 'Picture';
+		this.el('div', 'luatikz-ve-props-scope', panel).textContent =
+			'Applies to the whole tikzpicture.';
+
+		this.pictureControls.align = this.propsSelect(
+			panel,
+			'Align in note',
+			DIAGRAM_ALIGN_LABELS.map(([value, label]) => [value, label] as [string, string]),
+			value => this.applyDiagramAlignment(value as DiagramAlign),
+		);
+
+		const offsetRow = this.el('label', 'luatikz-ve-props-row', panel);
+		this.el('span', 'luatikz-ve-props-label', offsetRow).textContent = 'Nudge X (em)';
+		const offsetX = this.el('input', 'luatikz-ve-props-sides', offsetRow);
+		offsetX.type = 'number';
+		offsetX.min = '-40';
+		offsetX.max = '40';
+		offsetX.step = '0.5';
+		offsetX.placeholder = '0';
+		offsetX.title = 'Shift the diagram sideways from its alignment, in em';
+		offsetX.addEventListener('change', () => {
+			this.applyDiagramOffsetX(offsetX.value);
+		}, { signal: this.ac.signal });
+		this.pictureControls.offsetX = offsetX;
+
+		this.pictureControls.width = this.propsSelect(
+			panel,
+			'Width in note',
+			PICTURE_WIDTH_PRESETS.map(([value, label]) => [value, label] as [string, string]),
+			value => this.applyDiagramWidth(value),
+		);
+
+		this.pictureControls.arrowTip = this.propsSelect(
+			panel,
+			'Arrow tips',
+			PICTURE_ARROW_TIPS.map(([value, label]) => [value, label] as [string, string]),
+			value => this.applyPictureOptions({ arrowTip: value as PictureArrowTip }),
+		);
+
+		this.pictureControls.lineWidth = this.propsSelect(
+			panel,
+			'Line width',
+			PICTURE_LINE_WIDTHS.map(([value, label]) => [value, label] as [string, string]),
+			value => this.applyPictureOptions({ lineWidth: value as PictureLineWidth }),
+		);
+
+		this.pictureControls.nodeFont = this.propsSelect(
+			panel,
+			'Node font',
+			PICTURE_FONT_SIZES.map(([value, label]) => [value, label] as [string, string]),
+			value => this.applyPictureOptions({ nodeFont: value as PictureFontSize }),
+		);
+
+		const scaleRow = this.el('label', 'luatikz-ve-props-row', panel);
+		this.el('span', 'luatikz-ve-props-label', scaleRow).textContent = 'Scale';
+		const scale = this.el('input', 'luatikz-ve-props-sides', scaleRow);
+		scale.type = 'number';
+		scale.min = '0.1';
+		scale.max = '10';
+		scale.step = '0.1';
+		scale.placeholder = '1';
+		scale.addEventListener('change', () => {
+			const parsed = Number.parseFloat(scale.value);
+			this.applyPictureOptions({
+				scale: Number.isFinite(parsed) && parsed > 0 ? parsed : null,
+			});
+		}, { signal: this.ac.signal });
+		this.pictureControls.scale = scale;
+
+		const distanceRow = this.el('label', 'luatikz-ve-props-row', panel);
+		this.el('span', 'luatikz-ve-props-label', distanceRow).textContent = 'Node distance';
+		const distance = this.el('input', 'luatikz-ve-props-text', distanceRow);
+		distance.type = 'text';
+		distance.placeholder = '2cm';
+		distance.addEventListener('change', () => {
+			this.applyPictureOptions({ nodeDistance: distance.value });
+		}, { signal: this.ac.signal });
+		this.pictureControls.nodeDistance = distance;
+
+		// Everything the panel does not model is shown, not hidden: the user
+		// needs to know those options are still on the picture.
+		this.pictureControls.extra = this.el('div', 'luatikz-ve-picture-extra', panel);
+	}
+
+	/** The picture the panel reads and writes: the first real one in the fence. */
+	private panelPicture(): ScenePicture {
+		return this.scene.pictures[0] ?? insertionPicture(this.scene);
+	}
+
+	refreshPicturePanel(): void {
+		const controls = this.pictureControls;
+		if (!controls.align) {
+			return;
+		}
+		const picture = this.panelPicture();
+		const state = parsePictureOptions(picture.optionsText);
+
+		controls.align.value = parseDiagramAlign(this.scene.source);
+		if (controls.width) {
+			this.syncWidthOptions(controls.width, parseDiagramWidth(this.scene.source) ?? '');
+		}
+		if (controls.offsetX) {
+			const offset = parseDiagramOffsetX(this.scene.source);
+			// The directive is a CSS length; the control edits the em number.
+			controls.offsetX.value = offset ? offset.replace(/[a-z%]+$/i, '') : '';
+		}
+		if (controls.arrowTip) controls.arrowTip.value = state.arrowTip;
+		if (controls.lineWidth) controls.lineWidth.value = state.lineWidth;
+		if (controls.nodeFont) controls.nodeFont.value = state.nodeFont;
+		if (controls.scale) {
+			controls.scale.value = state.scale === null ? '' : String(state.scale);
+		}
+		if (controls.nodeDistance) controls.nodeDistance.value = state.nodeDistance;
+
+		if (controls.extra) {
+			// textContent, not innerHTML: the leftover tokens are user text.
+			controls.extra.textContent = '';
+			if (state.rest.length) {
+				this.el('span', 'luatikz-ve-props-label', controls.extra).textContent = 'Also set';
+				this.el('code', undefined, controls.extra).textContent = state.rest.join(', ');
+			}
+		}
+	}
+
+	/**
+	 * Rewrite the environment's `[...]` group only. A fence with no
+	 * `\begin{tikzpicture}` at all is wrapped in one first — the options have
+	 * to live somewhere, and the wrapper is what the renderer adds anyway.
+	 */
+	private applyPictureOptions(edit: PictureOptionEdit): void {
+		const picture = this.panelPicture();
+		const nextOptions = applyPictureOptionEdit(picture.optionsText, edit);
+
+		if (picture.implicit) {
+			const body = this.scene.source;
+			const group = formatPictureOptionGroup(nextOptions);
+			const trimmedEnd = body.replace(/\s+$/, '');
+			this.commitPatches([{
+				oldSpan: { from: 0, to: body.length },
+				replacement: `\\begin{tikzpicture}${group}\n${trimmedEnd}\n\\end{tikzpicture}\n`,
+			}]);
+			this.announce('Wrapped the fence in a tikzpicture to hold its options.');
+			return;
+		}
+
+		const span = picture.optionsSpan ?? { from: picture.beginSpan.to, to: picture.beginSpan.to };
+		this.commitPatches([{
+			oldSpan: span,
+			replacement: formatPictureOptionGroup(nextOptions),
+		}]);
+	}
+
+	/**
+	 * Keep the preset list and the fence in agreement: a width written by
+	 * hand that is not a preset is offered as one, so selecting something
+	 * else and coming back does not lose it.
+	 */
+	private syncWidthOptions(select: HTMLSelectElement, current: string): void {
+		const presets = PICTURE_WIDTH_PRESETS.map(([value]) => value);
+		const extra = select.querySelector<HTMLOptionElement>('option[data-custom="true"]');
+		if (current && !presets.includes(current)) {
+			const option = extra ?? this.el('option', undefined, select);
+			option.dataset.custom = 'true';
+			option.value = current;
+			option.textContent = `${current} (from the source)`;
+		} else {
+			extra?.remove();
+		}
+		select.value = current;
+	}
+
+	/**
+	 * How wide the finished diagram is drawn in the note, written as the
+	 * plugin's `% width=` directive. TikZ sizes a picture in absolute LaTeX
+	 * units, which says nothing about the reading column, so this is the one
+	 * control that can make a diagram fill the note on every screen.
+	 */
+	private applyDiagramWidth(raw: string): void {
+		const body = this.scene.source;
+		const width = normalizeDiagramWidth(raw);
+		const existing = widthDirectiveSpan(body);
+
+		if (!width) {
+			if (existing) {
+				// Drop the whole line, newline included, rather than leaving
+				// an empty comment behind.
+				const to = Math.min(body.length, existing.to + 1);
+				this.commitPatches([{ oldSpan: { from: existing.from, to }, replacement: '' }]);
+			}
+			this.announce('Diagram shown at its natural size.');
+			return;
+		}
+
+		const directive = formatWidthDirective(width);
+		this.commitPatches(existing
+			? [{ oldSpan: existing, replacement: directive }]
+			: [{ oldSpan: { from: 0, to: 0 }, replacement: `${directive}\n` }]);
+		this.announce(`Diagram width ${width}.`);
+	}
+
+	/**
+	 * Horizontal nudge away from the alignment, as `% offset-x=`. Alignment
+	 * puts the diagram in one of five places; this moves it from there, so
+	 * "centered, three em to the left" is expressible without giving up
+	 * centering altogether.
+	 */
+	private applyDiagramOffsetX(raw: string): void {
+		const body = this.scene.source;
+		const offset = normalizeDiagramOffsetX(raw);
+		const existing = offsetXDirectiveSpan(body);
+
+		if (!offset) {
+			if (existing) {
+				const to = Math.min(body.length, existing.to + 1);
+				this.commitPatches([{ oldSpan: { from: existing.from, to }, replacement: '' }]);
+			}
+			this.announce('Diagram back on its alignment.');
+			return;
+		}
+
+		const directive = formatOffsetXDirective(offset);
+		this.commitPatches(existing
+			? [{ oldSpan: existing, replacement: directive }]
+			: [{ oldSpan: { from: 0, to: 0 }, replacement: `${directive}\n` }]);
+		this.announce(`Diagram nudged ${offset}.`);
+	}
+
+	/**
+	 * Where the rendered diagram sits in the note, written as the plugin's
+	 * `% align=` directive line: a comment to TikZ, so it never reaches the
+	 * compiler, and the one place both the reading view and the floating
+	 * preview already read alignment from.
+	 */
+	private applyDiagramAlignment(align: DiagramAlign): void {
+		const body = this.scene.source;
+		const directive = formatAlignDirective(align);
+		const existing = alignDirectiveSpan(body);
+
+		if (existing) {
+			this.commitPatches([{ oldSpan: existing, replacement: directive }]);
+		} else {
+			this.commitPatches([{ oldSpan: { from: 0, to: 0 }, replacement: `${directive}\n` }]);
+		}
+		this.announce(`Diagram aligned ${align}.`);
+	}
+
+	/* ---------------------------------------------------------------------- */
 	/* lifecycle                                                               */
 	/* ---------------------------------------------------------------------- */
 
@@ -1315,6 +1653,7 @@ export class VisualTikzEditor {
 		this.renderDiagnostics();
 		this.updatePropsFromSelection();
 		this.refreshObjectsPanel();
+		this.refreshPicturePanel();
 	}
 
 	/** Compiled result from the authoritative pipeline (or an error). */
@@ -2196,9 +2535,19 @@ export class VisualTikzEditor {
 				}
 			}
 		}
-		if (replacements.includes('american voltage source')
+		// Every source drawn with +/- signs needs the rotation fix, the
+		// dependent (controlled) voltage source included.
+		if (/american (?:controlled )?voltage source/.test(replacements)
 			&& !this.scene.source.includes('sources/symbol/sign rotation')) {
 			lines.push('\\ctikzset{sources/symbol/sign rotation/.initial=auto}');
+		}
+		// circuitikz's stock zigzag is tall and wide enough to dominate a
+		// note-sized diagram, and it did not match the compact glyph the
+		// canvas previews while you place one. These are the proportions the
+		// preview draws, so what you place is what compiles.
+		if (/\bto\[R[,\]]/.test(replacements)
+			&& !this.scene.source.includes('bipoles/resistor')) {
+			lines.push('\\ctikzset{bipoles/resistor/height=.16, bipoles/resistor/width=.6}');
 		}
 		if (!lines.length) {
 			return [];
@@ -3838,10 +4187,11 @@ export class VisualTikzEditor {
 	/* panels                                                                  */
 	/* ---------------------------------------------------------------------- */
 
-	togglePanel(panel: 'props' | 'source' | 'objects', force?: boolean): void {
+	togglePanel(panel: 'props' | 'picture' | 'source' | 'objects', force?: boolean): void {
 		const target = panel === 'props' ? this.propsPanel
-			: panel === 'objects' ? this.objectsPanel
-				: this.sourcePanel;
+			: panel === 'picture' ? this.picturePanel
+				: panel === 'objects' ? this.objectsPanel
+					: this.sourcePanel;
 		const toggle = this.root.querySelector<HTMLButtonElement>(`.luatikz-ve-${panel}-toggle`);
 		const open = force ?? target.classList.contains('luatikz-ve-hidden');
 		target.classList.toggle('luatikz-ve-hidden', !open);
@@ -3855,6 +4205,13 @@ export class VisualTikzEditor {
 		if (panel === 'objects' && open) {
 			this.refreshObjectsPanel();
 		}
+		if (panel === 'picture' && open) {
+			this.refreshPicturePanel();
+		}
+	}
+
+	get picturePanelOpen(): boolean {
+		return !this.picturePanel.classList.contains('luatikz-ve-hidden');
 	}
 
 	get sourcePanelOpen(): boolean {

@@ -1,42 +1,14 @@
-/** Repair TikZJax SVG text nodes when TeX math fonts map to wrong Unicode glyphs. */
-
-const PLAIN_TEXT_FONT_FAMILY = 'Latin Modern Roman, Computer Modern, serif';
-
-const CMMI10_GLYPH_MAP: Record<string, string> = {
-	'\u00B5': '\u03B8',
-	'\u00B8': '\u03BB',
-	'\u00B9': '\u03BC',
-	'\u00AE': '\u03B1',
-	'\u00AF': '\u03B2',
-	'\u00B0': '\u03B3',
-	'\u00B1': '\u03B4',
-	'\u00BE': '\u03C3',
-	'\u0021': '\u03C9',
-	'\u00BC': '\u03C0',
-	'\u003A': '.',
-};
-
-const CMR10_GLYPH_MAP: Record<string, string> = {
-	'\u00AC': '\u03A9',
-};
-
-const CMSY10_GLYPH_MAP: Record<string, string> = {
-	'\u00A1': '-',
-	'\u2212': '-',
-	'\u2219': '\u2264',
-	'\u00A3': '\u00D7',
-	'\u00A2': '\u00B7',
-	'\u00A7': '\u00B1',
-	'\u0031': '\u221E',
-};
-
-const GLYPH_MAPS: Record<string, Record<string, string>> = {
-	cmmi10: CMMI10_GLYPH_MAP,
-	cmr10: CMR10_GLYPH_MAP,
-	cmsy10: CMSY10_GLYPH_MAP,
-};
-
-const MATH_FONT_FAMILIES = new Set(['cmmi10', 'cmr10', 'cmsy10', 'lmr10', 'lmss10', 'lmtt10']);
+/**
+ * Repair the SVG that TikZJax produces.
+ *
+ * Its DVI→SVG converter writes each glyph as a raw TeX *font position* and
+ * names the TeX font in `font-family`. Readers have no such font installed,
+ * so every glyph is shown through a fallback font that means something else
+ * at that code point. `src/utils/texFontGlyphs.ts` holds the decoder and the
+ * real font encodings; this file applies them to the markup.
+ */
+import { classifyTexFont, decodeTexGlyphs, type TexFontInfo } from './texFontGlyphs';
+import { applyRtlRunsToSvg, type RtlRun } from '../latex/tikzJaxRtl';
 
 const STANDALONE_BACKGROUND_FILLS = [
 	/fill="rgb\(100%,100%,100%\)"/i,
@@ -45,50 +17,6 @@ const STANDALONE_BACKGROUND_FILLS = [
 	/fill="#fff"/i,
 	/fill="white"/i,
 ];
-
-function isPlainTextLabel(content: string): boolean {
-	return /^[\x20-\x7E]+$/.test(content.trim());
-}
-
-function replaceMappedGlyphs(content: string, table: Record<string, string>): string {
-	let result = content;
-	for (const [bad, good] of Object.entries(table)) {
-		if (result.includes(bad)) {
-			result = result.replaceAll(bad, good);
-		}
-	}
-	return result;
-}
-
-function setFontFamily(attrs: string, family: string): string {
-	if (attrs.includes('font-family=')) {
-		return attrs.replace(/font-family="[^"]+"/, `font-family="${family}"`);
-	}
-	return `${attrs} font-family="${family}"`;
-}
-
-function fixTextContent(family: string, content: string): string {
-	const table = GLYPH_MAPS[family];
-	if (!table) {
-		return content;
-	}
-	return replaceMappedGlyphs(content, table);
-}
-
-function fixTextNode(full: string, family: string, attrs: string, content: string): string {
-	if (isPlainTextLabel(content)) {
-		const nextAttrs = setFontFamily(attrs, PLAIN_TEXT_FONT_FAMILY);
-		return `<text${nextAttrs}>${content}</text>`;
-	}
-
-	const mapped = fixTextContent(family, content);
-	if (mapped === content) {
-		return full;
-	}
-
-	const nextAttrs = setFontFamily(attrs, 'Cambria Math, STIX Two Math, serif');
-	return `<text${nextAttrs}>${mapped}</text>`;
-}
 
 /** Remove the full-canvas white background rect from standalone TikZJax SVG output. */
 export function stripStandaloneBackgroundRect(svgInput: string): string {
@@ -113,23 +41,133 @@ export function stripStandaloneBackgroundRect(svgInput: string): string {
 	return `${openTag}${leadingSpace}${afterRectSpace}${afterRect}`;
 }
 
-/** Fix common corrupted math symbols in TikZJax SVG output. */
+/**
+ * Resolve each `<text>` element's effective font, including a `font-family`
+ * that SVGO hoisted onto an enclosing `<g>`.
+ *
+ * This is why some formulas looked fine and others did not: once several
+ * sibling runs share a TeX font, the optimizer moves the attribute up to the
+ * group and the element itself carries none, so an attribute-only check saw
+ * no font and left the glyphs corrupted.
+ */
+const TAG_RE = /<(\/?)([a-zA-Z][\w:-]*)((?:"[^"]*"|'[^']*'|[^>])*?)(\/?)>/g;
+
+const XML_ENTITIES: Record<string, string> = {
+	'&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'",
+};
+
+/** Text content arrives entity-escaped; decode before mapping code points. */
+function decodeXmlText(text: string): string {
+	return text.replace(/&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);/g, entity => {
+		const named = XML_ENTITIES[entity];
+		if (named !== undefined) {
+			return named;
+		}
+		const numeric = entity.startsWith('&#x') || entity.startsWith('&#X')
+			? Number.parseInt(entity.slice(3, -1), 16)
+			: Number.parseInt(entity.slice(2, -1), 10);
+		return Number.isFinite(numeric) ? String.fromCodePoint(numeric) : entity;
+	});
+}
+
+function encodeXmlText(text: string): string {
+	return text.replace(/[&<>]/g, char =>
+		(char === '&' ? '&amp;' : char === '<' ? '&lt;' : '&gt;'));
+}
+
+function readAttribute(attrs: string, name: string): string | null {
+	const match = attrs.match(new RegExp(`\\b${name}="([^"]*)"`));
+	return match ? match[1] : null;
+}
+
+function setAttribute(attrs: string, name: string, value: string): string {
+	const pattern = new RegExp(`\\b${name}="[^"]*"`);
+	return pattern.test(attrs)
+		? attrs.replace(pattern, `${name}="${value}"`)
+		: `${attrs} ${name}="${value}"`;
+}
+
+/** Rewrite one `<text>` run: decode its glyphs and point it at a real font. */
+function repairTextElement(attrs: string, content: string, font: TexFontInfo): string {
+	const decoded = decodeXmlText(content);
+	const mapped = decodeTexGlyphs(decoded, font);
+
+	let nextAttrs = setAttribute(attrs, 'font-family', font.cssFamily);
+	if (font.italic) {
+		nextAttrs = setAttribute(nextAttrs, 'font-style', 'italic');
+	}
+	if (font.bold) {
+		nextAttrs = setAttribute(nextAttrs, 'font-weight', 'bold');
+	}
+	return `<text${nextAttrs}>${encodeXmlText(mapped)}</text>`;
+}
+
+/**
+ * Map every TeX glyph in the document back to Unicode.
+ *
+ * A single pass over the markup keeps a stack of the open elements' inherited
+ * `font-family`, so a `<text>` inside `<g font-family="cmsy10">` is repaired
+ * exactly like one that carries the attribute itself.
+ */
 export function fixTikzJaxSvgGlyphs(svgInput: unknown): string {
 	if (typeof svgInput !== 'string') {
 		return '';
 	}
 
-	return svgInput.replace(
-		/<text\b([^>]*)>([^<]*)<\/text>/g,
-		(full: string, attrs: string, content: string) => {
-			const familyMatch = attrs.match(/\bfont-family="([^"]+)"/);
-			const family = familyMatch?.[1] ?? '';
-			if (!MATH_FONT_FAMILIES.has(family)) {
-				return full;
+	const inherited: Array<string | null> = [];
+	let out = '';
+	let cursor = 0;
+	TAG_RE.lastIndex = 0;
+
+	let match: RegExpExecArray | null;
+	while ((match = TAG_RE.exec(svgInput))) {
+		const [tag, closing, name, attrs, selfClosing] = match;
+		out += svgInput.slice(cursor, match.index);
+		cursor = match.index + tag.length;
+
+		if (closing) {
+			inherited.pop();
+			out += tag;
+			continue;
+		}
+
+		const own = readAttribute(attrs, 'font-family');
+		const current = own ?? inherited[inherited.length - 1] ?? null;
+
+		if (name.toLowerCase() !== 'text') {
+			if (!selfClosing) {
+				inherited.push(current);
 			}
-			return fixTextNode(full, family, attrs, content);
-		},
-	);
+			// A TeX font name left on a group would still be inherited by any
+			// element this pass does not rewrite, so point it at a real font
+			// while the stack keeps the original name for decoding.
+			const groupFont = own ? classifyTexFont(own) : null;
+			out += groupFont
+				? `<${name}${setAttribute(attrs, 'font-family', groupFont.cssFamily)}${selfClosing ? '/' : ''}>`
+				: tag;
+			continue;
+		}
+
+		// <text> … </text>: take the whole run so its content can be rewritten.
+		const closeAt = svgInput.indexOf('</text>', cursor);
+		const font = current ? classifyTexFont(current) : null;
+		// A run with nested markup (a <tspan>) is left alone: its content is
+		// not a single text node, and re-escaping it would mangle the tags.
+		const nested = closeAt !== -1 && svgInput.lastIndexOf('<', closeAt - 1) >= cursor;
+		if (selfClosing || closeAt === -1 || !font || nested) {
+			if (!selfClosing) {
+				inherited.push(current);
+			}
+			out += tag;
+			continue;
+		}
+
+		out += repairTextElement(attrs, svgInput.slice(cursor, closeAt), font);
+		cursor = closeAt + '</text>'.length;
+		TAG_RE.lastIndex = cursor;
+	}
+
+	return out + svgInput.slice(cursor);
 }
 
 /**
@@ -254,7 +292,15 @@ export function injectPgfPatternDefs(svgInput: string, sourceText?: string): str
 	return svgInput.replace(/(<svg\b[^>]*>)/i, `$1<defs>${defs}</defs>`);
 }
 
-export function finalizeTikzJaxSvg(svgInput: unknown, sourceText?: string): string {
+export function finalizeTikzJaxSvg(
+	svgInput: unknown,
+	sourceText?: string,
+	rtlRuns: readonly RtlRun[] = [],
+): string {
+	// Glyph repair first: the RTL text is written in afterwards so the TeX
+	// position decoder never sees it (every Hebrew letter would otherwise
+	// look like a font position to decode).
 	const glyphFixed = fixTikzJaxSvgGlyphs(svgInput);
-	return injectPgfPatternDefs(stripStandaloneBackgroundRect(glyphFixed), sourceText);
+	const patterned = injectPgfPatternDefs(stripStandaloneBackgroundRect(glyphFixed), sourceText);
+	return applyRtlRunsToSvg(patterned, rtlRuns);
 }

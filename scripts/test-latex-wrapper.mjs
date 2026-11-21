@@ -347,7 +347,7 @@ for (const options of [{}, { customPreamble: '\\usepackage{tikz}' }]) {
  * because they have their own parse branches — but a NEW string setting has to
  * be classified as one or the other before this passes.
  */
-const ENUM_SETTING_KEYS = ['renderEngine', 'outputFormat', 'darkModeStyle', 'semicolonReminderMode'];
+const ENUM_SETTING_KEYS = ['renderEngine', 'outputFormat', 'darkModeStyle', 'semicolonReminderMode', 'defaultDiagramAlign'];
 
 for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
 	if (typeof value !== 'string') {

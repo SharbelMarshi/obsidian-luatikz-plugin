@@ -13,7 +13,7 @@ import {
 	type TikzSnippetCategory,
 } from '../latex/tikzSnippets';
 import { parseTikzBlockContext } from '../latex/tikzBlockContext';
-import { LATEX_FENCE_LANGUAGES, TIKZ_FENCE_LANGUAGES, enclosingFenceLine } from './tikzFences';
+import { latexFenceLanguages, tikzFenceLanguages, enclosingFenceLine } from './tikzFences';
 
 const latexCommands: Completion[] = [
 	snippetCompletion('\\begin{tikzpicture}\n${}\n\\end{tikzpicture}', {
@@ -97,7 +97,7 @@ const allCommandCompletions = [
 
 /** Block body from the opening fence to the cursor, or '' when not in one. */
 function tikzBlockSourceBeforeCursor(doc: EditorView['state']['doc'], pos: number): string {
-	const fenceLine = enclosingFenceLine(doc, pos, TIKZ_FENCE_LANGUAGES);
+	const fenceLine = enclosingFenceLine(doc, pos, tikzFenceLanguages());
 	if (fenceLine === null) {
 		return '';
 	}
@@ -151,7 +151,7 @@ function contextualCompletions(blockSource: string, explicit: boolean): Completi
 }
 
 function latexCompletionSource(context: CompletionContext) {
-	if (enclosingFenceLine(context.state.doc, context.pos, LATEX_FENCE_LANGUAGES) === null) {
+	if (enclosingFenceLine(context.state.doc, context.pos, latexFenceLanguages()) === null) {
 		return null;
 	}
 

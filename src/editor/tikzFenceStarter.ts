@@ -1,6 +1,6 @@
 import { EditorView } from '@codemirror/view';
 import type { Extension, Text } from '@codemirror/state';
-import { OPEN_FENCE_RE } from './tikzFences';
+import { isOpenTikzFenceLine } from './tikzFences';
 const STARTER_BODY = String.raw`\begin{tikzpicture}
 
 \end{tikzpicture}`;
@@ -23,7 +23,7 @@ export function findStarterLine(doc: Text, fromB: number, toB: number): number |
 		if (number < 2 || doc.line(number).text.trim().length > 0) {
 			continue;
 		}
-		if (!OPEN_FENCE_RE.test(doc.line(number - 1).text.trim())) {
+		if (!isOpenTikzFenceLine(doc.line(number - 1).text.trim())) {
 			continue;
 		}
 		if (number === doc.lines) {
@@ -83,7 +83,7 @@ function insertStarter(view: EditorView, lineNumber: number): void {
 	if (line.text.trim().length > 0) {
 		return;
 	}
-	if (!OPEN_FENCE_RE.test(doc.line(lineNumber - 1).text.trim())) {
+	if (!isOpenTikzFenceLine(doc.line(lineNumber - 1).text.trim())) {
 		return;
 	}
 

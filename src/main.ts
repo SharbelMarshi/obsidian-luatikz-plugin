@@ -45,6 +45,8 @@ import { clearTikzErrorHighlightForPath, showTikzErrorHighlightFromResult } from
 import { isMobileApp } from './utils/platform';
 import { isObsidianDarkMode, watchObsidianDarkMode } from './utils/themeWatcher';
 import { isRecord } from './utils/guards';
+import { normalizeFenceLanguages, setTikzFenceLanguages } from './editor/tikzFences';
+import { observeLivePreviewHeight } from './editor/livePreviewMeasure';
 
 interface CodeMirrorModeInfo {
 	name: string;
@@ -88,13 +90,15 @@ function extensionList(extension: Extension): Extension[] {
 class TikzBlockRefresherCleanup extends MarkdownRenderChild {
 	constructor(
 		containerEl: HTMLElement,
-		private readonly unregister: () => void,
+		private readonly cleanups: Array<() => void>,
 	) {
 		super(containerEl);
 	}
 
 	onunload(): void {
-		this.unregister();
+		for (const cleanup of this.cleanups) {
+			cleanup();
+		}
 	}
 }
 
@@ -114,7 +118,8 @@ export default class LuaTikzPlugin extends Plugin {
 		};
 	}
 
-	private refreshDiagramsForThemeChange(): void {
+	/** Re-render every mounted block (theme change, presentation settings). */
+	refreshRenderedDiagrams(): void {
 		for (const refresh of this.tikzBlockRefreshers) {
 			refresh();
 		}
@@ -279,12 +284,11 @@ export default class LuaTikzPlugin extends Plugin {
 			});
 
 			this.register(watchObsidianDarkMode(() => {
-				this.refreshDiagramsForThemeChange();
+				this.refreshRenderedDiagrams();
 			}));
 
 			this.addSyntaxHighlighting();
-			this.registerTikzCodeBlock('tikz');
-			this.registerTikzCodeBlock('luatikz');
+			this.registerTikzCodeBlocks();
 
 			if (this.settings.showInstallNotice) {
 				this.app.workspace.onLayoutReady(() => {
@@ -319,10 +323,50 @@ export default class LuaTikzPlugin extends Plugin {
 		this.settings = migrateLegacySettings(raw, parsed);
 	}
 
+	/**
+	 * Register every configured language, one at a time.
+	 *
+	 * Obsidian throws when a language already has a post-processor, and an
+	 * `onload` that rethrows leaves the plugin dead — which is exactly what
+	 * users hit with another TikZ plugin installed ("Code block postprocessor
+	 * for language tikz is already registered"). A taken language is now
+	 * reported and skipped, and the rest of the plugin loads normally.
+	 */
+	registerTikzCodeBlocks(): void {
+		const languages = normalizeFenceLanguages(this.settings.codeBlockLanguages);
+		const registered: string[] = [];
+		const taken: string[] = [];
+
+		for (const language of languages) {
+			try {
+				this.registerTikzCodeBlock(language);
+				registered.push(language);
+			} catch (error: unknown) {
+				taken.push(language);
+				console.warn(`LuaTikz: code block language "${language}" is taken`, error);
+			}
+		}
+
+		// The editor extensions must only treat the fences we actually own as
+		// ours, or autocomplete and linting would fight the other plugin.
+		setTikzFenceLanguages(registered.length ? registered : languages);
+
+		if (taken.length) {
+			const detail = registered.length
+				? `LuaTikZ still renders: ${registered.join(', ')}.`
+				: 'LuaTikZ renders no code blocks right now.';
+			new Notice(
+				`LuaTikZ: another plugin already renders \`\`\`${taken.join('/')}. ${detail}`
+				+ ' Change "Code block languages" in LuaTikZ settings.',
+				12000,
+			);
+		}
+	}
+
 	registerTikzCodeBlock(language: string) {
 		this.registerMarkdownCodeBlockProcessor(language, async (source, el, ctx) => {
 			el.addClass('luatikz-render-wrapper');
-			const prepared = prepareTikzBlock(source);
+			const prepared = prepareTikzBlock(source, this.settings);
 			presentLoadingState(el, prepared);
 
 			const section = ctx.getSectionInfo(el);
@@ -394,7 +438,11 @@ export default class LuaTikzPlugin extends Plugin {
 			const unregisterRefresher = this.registerTikzBlockRefresher(() => {
 				void render();
 			});
-			ctx.addChild(new TikzBlockRefresherCleanup(el, unregisterRefresher));
+			// The diagram lands long after Live Preview measured the block;
+			// without this the gutter keeps the placeholder's height and the
+			// line numbers drift away from the text below the block.
+			const stopMeasuring = observeLivePreviewHeight(el);
+			ctx.addChild(new TikzBlockRefresherCleanup(el, [unregisterRefresher, stopMeasuring]));
 
 			await render();
 		});

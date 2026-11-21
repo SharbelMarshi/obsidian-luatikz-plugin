@@ -961,12 +961,15 @@ function scanPictures(source: string): ScenePicture[] {
 	BEGIN_PICTURE_RE.lastIndex = 0;
 	let match: RegExpExecArray | null;
 	while ((match = BEGIN_PICTURE_RE.exec(source))) {
-		let bodyFrom = match.index + match[0].length;
+		const beginSpan = { from: match.index, to: match.index + match[0].length };
+		let bodyFrom = beginSpan.to;
 		const afterBegin = skipWhitespaceAndComments(source, bodyFrom, source.length);
 		let optionsText = '';
+		let optionsSpan: { from: number; to: number } | null = null;
 		if (source[afterBegin] === '[') {
 			const groupEnd = scanBalancedGroup(source, afterBegin, source.length);
 			optionsText = source.slice(afterBegin + 1, groupEnd - 1);
+			optionsSpan = { from: afterBegin, to: groupEnd };
 			bodyFrom = groupEnd;
 		}
 		const endMatch = /\\end\s*\{tikzpicture\}/.exec(source.slice(bodyFrom));
@@ -980,6 +983,8 @@ function scanPictures(source: string): ScenePicture[] {
 		const transformResult = parsePictureTransform(flatOptions);
 		pictures.push({
 			index: pictures.length,
+			beginSpan,
+			optionsSpan,
 			bodyFrom,
 			bodyTo,
 			optionsText,
@@ -995,6 +1000,8 @@ function scanPictures(source: string): ScenePicture[] {
 	if (!pictures.length) {
 		pictures.push({
 			index: 0,
+			beginSpan: { from: 0, to: 0 },
+			optionsSpan: null,
 			bodyFrom: 0,
 			bodyTo: source.length,
 			optionsText: '',

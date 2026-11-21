@@ -6,6 +6,7 @@ import {
 	type DiagramAlign,
 } from '../utils/diagramAlign';
 import { applyGridDirective } from '../utils/diagramGrid';
+import { normalizeDiagramWidth, parseDiagramOffsetX, parseDiagramWidth } from '../utils/diagramSize';
 import { CAL_MARKER_MAX_RGB, CAL_MARKER_MIN_RGB } from '../utils/coordinatePick';
 import { containsArabicContent, containsHebrewContent } from '../utils/rtlDetection';
 import type { LuaTikzSettings } from '../settings/settingsModel';
@@ -350,15 +351,32 @@ export function tidyTikzSource(tikzSource: string): string {
 export interface PreparedTikzSource {
 	renderSource: string;
 	diagramAlign: DiagramAlign;
+	/** Resolved CSS width for the rendered diagram; null = natural size. */
+	diagramWidth: string | null;
+	/** Horizontal nudge away from the alignment; null = none. */
+	diagramOffsetX: string | null;
 }
 
-export function prepareTikzRenderSource(source: string): PreparedTikzSource {
+/** Vault-wide fallbacks a block's own directives override. */
+export interface PresentationDefaults {
+	align?: DiagramAlign;
+	/** Raw setting value; validated here, not by the caller. */
+	width?: string;
+}
+
+export function prepareTikzRenderSource(
+	source: string,
+	defaults: PresentationDefaults = {},
+): PreparedTikzSource {
 	const tidied = tidyTikzSource(source);
 	const stripped = stripDiagramAlignDirective(tidied);
 	return {
 		// tidied, not stripped: the `% grid=N` line is gone from `stripped`.
 		renderSource: applyGridDirective(tidied, stripped),
-		diagramAlign: parseDiagramAlign(tidied),
+		diagramAlign: parseDiagramAlign(tidied, defaults.align ?? 'center'),
+		diagramWidth: parseDiagramWidth(tidied)
+			?? normalizeDiagramWidth(defaults.width ?? ''),
+		diagramOffsetX: parseDiagramOffsetX(tidied),
 	};
 }
 

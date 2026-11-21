@@ -14,6 +14,7 @@ import {
 	STRING_SETTING_KEYS,
 	type DarkModeStyle,
 	type LuaTikzRenderEngine,
+	type DiagramAlignSetting,
 	type LuaTikzSettings,
 	type SemicolonReminderMode,
 } from './settingsModel';
@@ -22,6 +23,7 @@ import { clearCommandResolutionCache } from '../desktop/lualatexShell';
 import { migrateDarkModeStyle } from '../utils/darkMode';
 import { isMobileApp } from '../utils/platform';
 import { shouldClearRenderCacheOnSettingChange } from '../utils/settingsCache';
+import { normalizeFenceLanguages, tikzFenceLanguages } from '../editor/tikzFences';
 import { asBoolean, asNumber, asString, isRecord } from '../utils/guards';
 import { buildManagedPreamblePreview, latexWrapperOptionsFromSettings } from '../core/tikzSource';
 
@@ -54,6 +56,20 @@ function parseDarkModeStyle(value: unknown): DarkModeStyle | undefined {
 
 function parseSemicolonReminderMode(value: unknown): SemicolonReminderMode | undefined {
 	return value === 'off' || value === 'hint' || value === 'auto-append' ? value : undefined;
+}
+
+const DIAGRAM_ALIGN_LABELS: Record<DiagramAlignSetting, string> = {
+	left: 'Left',
+	'left-center': 'Left of centre',
+	center: 'Centered',
+	'right-center': 'Right of centre',
+	right: 'Right',
+};
+
+function parseDiagramAlignSetting(value: unknown): DiagramAlignSetting | undefined {
+	return typeof value === 'string' && value in DIAGRAM_ALIGN_LABELS
+		? value as DiagramAlignSetting
+		: undefined;
 }
 
 export function parseSettings(data: unknown): Partial<LuaTikzSettings> {
@@ -104,6 +120,10 @@ export function parseSettings(data: unknown): Partial<LuaTikzSettings> {
 		data.autoCloseBrackets,
 		DEFAULT_SETTINGS.autoCloseBrackets,
 	);
+	const defaultDiagramAlign = parseDiagramAlignSetting(data.defaultDiagramAlign);
+	if (defaultDiagramAlign) {
+		parsed.defaultDiagramAlign = defaultDiagramAlign;
+	}
 
 	return parsed;
 }
@@ -281,6 +301,43 @@ export class LuaTikzSettingTab extends PluginSettingTab {
 								this.refreshDeclarativeTab();
 								new Notice('Using the managed preamble.');
 							});
+						},
+					},
+				],
+			},
+			{
+				type: 'group',
+				heading: 'Diagram placement',
+				items: [
+					{
+						name: 'Code block languages',
+						desc: 'Languages LuaTikZ renders, comma separated. Change this when another plugin already owns ```tikz. Takes effect after Obsidian reloads the plugin.',
+						aliases: ['fence', 'tikz', 'conflict', 'code block'],
+						control: {
+							type: 'text',
+							key: 'codeBlockLanguages',
+							placeholder: DEFAULT_SETTINGS.codeBlockLanguages,
+						},
+					},
+					{
+						name: 'Default alignment',
+						desc: 'Where a diagram sits in the note. A block\'s own `% align=` line still wins.',
+						aliases: ['center', 'left', 'right'],
+						control: {
+							type: 'dropdown',
+							key: 'defaultDiagramAlign',
+							options: DIAGRAM_ALIGN_LABELS,
+							defaultValue: DEFAULT_SETTINGS.defaultDiagramAlign,
+						},
+					},
+					{
+						name: 'Default width',
+						desc: 'Rendered width of a diagram: 100%, 80%, 420px, 12cm… Empty keeps the diagram\'s natural size. A block\'s own `% width=` line still wins.',
+						aliases: ['size', 'scale', 'zoom', 'bigger'],
+						control: {
+							type: 'text',
+							key: 'defaultDiagramWidth',
+							placeholder: 'Natural size',
 						},
 					},
 				],
@@ -580,6 +637,49 @@ export class LuaTikzSettingTab extends PluginSettingTab {
 					new Notice('Using the managed preamble.');
 				}));
 
+		const placementSection = containerEl.createDiv({ cls: 'luatikz-glass-section luatikz-glass-card' });
+		new Setting(placementSection)
+			.setName('Diagram placement')
+			.setHeading();
+
+		const persistLanguages = debounce(async (value: string) => {
+			await this.persistSetting('codeBlockLanguages', value);
+		}, 500, true);
+
+		new Setting(placementSection)
+			.setName('Code block languages')
+			.setDesc('Languages LuaTikZ renders, comma separated. Change this when another plugin already owns ```tikz. Takes effect after Obsidian reloads the plugin.')
+			.addText(text => text
+				.setPlaceholder(DEFAULT_SETTINGS.codeBlockLanguages)
+				.setValue(this.plugin.settings.codeBlockLanguages)
+				.onChange(value => {
+					persistLanguages(value);
+				}));
+
+		new Setting(placementSection)
+			.setName('Default alignment')
+			.setDesc('Where a diagram sits in the note. A block\'s own `% align=` line still wins.')
+			.addDropdown(dropdown => dropdown
+				.addOptions(DIAGRAM_ALIGN_LABELS)
+				.setValue(this.plugin.settings.defaultDiagramAlign)
+				.onChange(async value => {
+					await this.persistSetting('defaultDiagramAlign', value);
+				}));
+
+		const persistWidth = debounce(async (value: string) => {
+			await this.persistSetting('defaultDiagramWidth', value);
+		}, 500, true);
+
+		new Setting(placementSection)
+			.setName('Default width')
+			.setDesc('Rendered width of a diagram: 100%, 80%, 420px, 12cm… Empty keeps the diagram\'s natural size. A block\'s own `% width=` line still wins.')
+			.addText(text => text
+				.setPlaceholder('Natural size')
+				.setValue(this.plugin.settings.defaultDiagramWidth)
+				.onChange(value => {
+					persistWidth(value);
+				}));
+
 		const appearanceSection = containerEl.createDiv({ cls: 'luatikz-glass-section luatikz-glass-card' });
 		new Setting(appearanceSection)
 			.setName('Appearance')
@@ -733,7 +833,12 @@ export class LuaTikzSettingTab extends PluginSettingTab {
 			if (mode) {
 				this.plugin.settings.semicolonReminderMode = mode;
 			}
-		} else if (settingKey === 'timeoutMs') {
+		} else if (settingKey === 'defaultDiagramAlign') {
+		const align = parseDiagramAlignSetting(value);
+		if (align) {
+			this.plugin.settings.defaultDiagramAlign = align;
+		}
+	} else if (settingKey === 'timeoutMs') {
 			this.plugin.settings.timeoutMs = clampTimeoutMs(asNumber(value, DEFAULT_SETTINGS.timeoutMs));
 		} else if ((STRING_SETTING_KEYS as readonly string[]).includes(settingKey)) {
 			const stringKey = settingKey as typeof STRING_SETTING_KEYS[number];
@@ -754,6 +859,31 @@ export class LuaTikzSettingTab extends PluginSettingTab {
 		if (shouldClearRenderCacheOnSettingChange(settingKey)) {
 			await this.plugin.renderer?.invalidateCache();
 		}
+		if (settingKey === 'defaultDiagramAlign' || settingKey === 'defaultDiagramWidth') {
+			// Presentation only — no recompile needed, but every mounted
+			// block has to be re-presented to pick the new default up.
+			this.plugin.refreshRenderedDiagrams();
+		}
+		if (settingKey === 'codeBlockLanguages') {
+			this.noticeLanguageReload();
+		}
+	}
+
+	/**
+	 * Obsidian has no API to unregister a code block post-processor, so a
+	 * changed language list only takes effect on the next plugin load. Say
+	 * so once the typed value actually differs from what is registered.
+	 */
+	private noticeLanguageReload(): void {
+		const wanted = normalizeFenceLanguages(this.plugin.settings.codeBlockLanguages);
+		const active = tikzFenceLanguages();
+		if (wanted.join(',') === [...active].join(',')) {
+			return;
+		}
+		new Notice(
+			'LuaTikZ: reload the plugin (or restart Obsidian) for the new code block languages to take effect.',
+			8000,
+		);
 	}
 
 	private refreshRendererChoices(): void {

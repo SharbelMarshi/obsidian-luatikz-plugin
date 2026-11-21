@@ -126,6 +126,17 @@ const BIPOLE_GLYPHS: Record<string, string> = {
 	L: 'inductor', 'cute inductor': 'inductor', 'american inductor': 'inductor',
 	V: 'vsource', sV: 'vsource', 'american voltage source': 'vsource',
 	I: 'isource', sI: 'isource', 'american current source': 'isource',
+	// Dependent (controlled) sources: a rhombus in every textbook, and in
+	// circuitikz too — the `…AM` bodies are diamonds, not circles.
+	cV: 'cvsource', cvsourceAM: 'cvsource',
+	'american controlled voltage source': 'cvsource',
+	'controlled voltage source': 'cvsource',
+	'european controlled voltage source': 'cvsourceEU',
+	cI: 'cisource', cisourceAM: 'cisource',
+	'american controlled current source': 'cisource',
+	'controlled current source': 'cisource',
+	'european controlled current source': 'cisourceEU',
+	ecsource: 'ecsource', 'empty controlled source': 'ecsource',
 	battery: 'battery2', battery1: 'battery', battery2: 'battery2',
 	'european resistor': 'box',
 	'D*': 'diode', Do: 'diode', 'D-': 'diode', 'full diode': 'diode', 'empty diode': 'diode',
@@ -188,12 +199,35 @@ export function toSegmentPrimitives(
 		{ kind: 'segment', a: at(1, 0), b: point },
 	];
 
+	// A rhombus in the glyph frame, used by every dependent-source body.
+	const diamond = (halfAcross: number): ScenePrimitive[] => polyline([
+		[-1, 0], [0, halfAcross], [1, 0], [0, -halfAcross], [-1, 0],
+	]);
+
 	switch (glyph) {
-		case 'resistor':
-			primitives.push(...polyline([
-				[-1, 0], [-0.75, 0.18], [-0.25, -0.18], [0.25, 0.18], [0.75, -0.18], [1, 0],
-			]));
+		case 'resistor': {
+			// Seven shallow teeth packed into the middle of the component
+			// zone: the american zigzag as drawn in textbooks. Each revision
+			// of this glyph has gone the same way — fewer, taller teeth read
+			// as a spike train rather than a resistor — so the amplitude is
+			// now a seventh of the tooth pitch and the leads carry the rest.
+			const teeth = 7;
+			// Proportional, not absolute: `half` already scales with the
+			// component, and a fixed amplitude made short components spiky.
+			const amplitude = half * 0.18;
+			const zigzagHalfSpan = 0.8;
+			const step = (2 * zigzagHalfSpan) / (teeth + 1);
+			const points: Array<[number, number]> = [[-1, 0], [-zigzagHalfSpan, 0]];
+			for (let index = 1; index <= teeth; index++) {
+				points.push([
+					-zigzagHalfSpan + index * step,
+					index % 2 === 1 ? amplitude : -amplitude,
+				]);
+			}
+			points.push([zigzagHalfSpan, 0], [1, 0]);
+			primitives.push(...polyline(points));
 			break;
+		}
 		case 'capacitor':
 			primitives.push(
 				seg(-1, 0, -0.18, 0), seg(0.18, 0, 1, 0),
@@ -227,6 +261,30 @@ export function toSegmentPrimitives(
 				seg(-0.45, 0, 0.35, 0),
 				seg(0.35, 0, 0.05, 0.14), seg(0.35, 0, 0.05, -0.14),
 			);
+			break;
+		case 'cvsource':
+			primitives.push(
+				...diamond(half),
+				{ kind: 'nodeMark', at: at(-0.42, 0), text: '+' },
+				{ kind: 'nodeMark', at: at(0.42, 0), text: '\u2212' },
+			);
+			break;
+		case 'cvsourceEU':
+			primitives.push(...diamond(half), seg(-1, 0, 1, 0));
+			break;
+		case 'cisource':
+			primitives.push(
+				...diamond(half),
+				seg(-0.45, 0, 0.35, 0),
+				seg(0.35, 0, 0.05, 0.14), seg(0.35, 0, 0.05, -0.14),
+			);
+			break;
+		case 'cisourceEU':
+			// circuitikz draws the full vertical diagonal, vertex to vertex.
+			primitives.push(...diamond(half), seg(0, -half, 0, half));
+			break;
+		case 'ecsource':
+			primitives.push(...diamond(half));
 			break;
 		case 'battery':
 			primitives.push(

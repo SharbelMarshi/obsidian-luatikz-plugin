@@ -884,6 +884,15 @@ function propsControlByLabel(editor, label) {
 	assert.equal(editor.currentScene.objects.filter(object => object.type === 'locked').length, 0,
 		'placed component stays editable');
 
+	// circuitikz's stock zigzag is taller and wider than the glyph the canvas
+	// previews, so the placed resistor brings the matching geometry with it —
+	// once, and never if the fence already sets it.
+	assert.ok(state.body.includes('\\ctikzset{bipoles/resistor/height=.16, bipoles/resistor/width=.6}'),
+		`resistor geometry written: ${state.body}`);
+	const geometryLines = state.body.split('\n')
+		.filter(line => line.includes('bipoles/resistor')).length;
+	assert.equal(geometryLines, 1, 'the geometry line is written once');
+
 	// The endpoints are draggable like any line (tap the lead wire).
 	editor.setTool('select');
 	router.handlePointerDown(mouse(2, { x: 0.3, y: 0 }, svg));
@@ -1349,6 +1358,130 @@ function propsControlByLabel(editor, label) {
 	const undoBtn = editor.root.querySelector('.luatikz-ve-undo');
 	undoBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
 	assert.equal(state.undos, 2);
+	editor.destroy();
+}
+
+/* --- picture panel: tikzpicture defaults and note alignment ----------------------------- */
+
+{
+	const { editor, state } = makeEditor(EMPTY);
+	const toggle = editor.root.querySelector('.luatikz-ve-picture-toggle');
+	assert.ok(toggle, 'the toolbar must offer the Picture panel');
+	assert.equal(editor.picturePanelOpen, false, 'the panel starts closed');
+	toggle.dispatchEvent(new window.Event('click', { bubbles: true }));
+	assert.equal(editor.picturePanelOpen, true);
+
+	const panel = editor.root.querySelector('.luatikz-ve-picture');
+	const selects = [...panel.querySelectorAll('select')];
+	const [alignSelect, noteWidthSelect, arrowSelect, widthSelect, fontSelect] = selects;
+	assert.equal(selects.length, 5, 'align, width in note, arrow tips, line width, node font');
+
+	// Five alignment stops, including the quarter positions.
+	assert.deepEqual(
+		[...alignSelect.querySelectorAll('option')].map(option => option.value),
+		['left', 'left-center', 'center', 'right-center', 'right'],
+	);
+
+	const change = (el, value) => {
+		el.value = value;
+		el.dispatchEvent(new window.Event('change', { bubbles: true }));
+	};
+
+	change(arrowSelect, 'latex');
+	assert.ok(state.body.startsWith('\\begin{tikzpicture}[>=latex]'), state.body);
+
+	change(widthSelect, 'thick');
+	change(fontSelect, '\\Large');
+	assert.ok(
+		state.body.startsWith('\\begin{tikzpicture}[>=latex, thick, every node/.style={font=\\Large}]'),
+		state.body,
+	);
+
+	// The panel reflects what the source says after each write.
+	assert.equal(arrowSelect.value, 'latex');
+	assert.equal(widthSelect.value, 'thick');
+	assert.equal(fontSelect.value, '\\Large');
+
+	// Clearing one option leaves the others alone.
+	change(widthSelect, '');
+	assert.ok(
+		state.body.startsWith('\\begin{tikzpicture}[>=latex, every node/.style={font=\\Large}]'),
+		state.body,
+	);
+
+	// Alignment is a plugin directive, so it never reaches the compiler.
+	change(alignSelect, 'left');
+	assert.ok(state.body.startsWith('% align=left\n'), state.body);
+	change(alignSelect, 'right-center');
+	assert.ok(state.body.startsWith('% align=right-center\n'), state.body);
+	assert.equal(
+		state.body.split('\n').filter(line => line.startsWith('% align=')).length,
+		1,
+		'the directive is rewritten, not stacked',
+	);
+
+	// Rendered width is the same kind of directive.
+	change(noteWidthSelect, '100%');
+	assert.ok(state.body.includes('% width=100%'), state.body);
+	change(noteWidthSelect, '50%');
+	assert.equal(
+		state.body.split('\n').filter(line => line.startsWith('% width=')).length,
+		1,
+		'the width directive is rewritten, not stacked',
+	);
+	assert.ok(state.body.includes('% width=50%'), state.body);
+
+	// Back to natural size: the directive line goes away entirely.
+	change(noteWidthSelect, '');
+	assert.ok(!state.body.includes('% width='), state.body);
+	assert.ok(state.body.includes('% align=right-center'), 'the other directive survives');
+
+	// Nudge X shifts the diagram away from whatever alignment put it there.
+	const nudge = [...panel.querySelectorAll('input[type="number"]')][0];
+	change(nudge, '-3');
+	assert.ok(state.body.includes('% offset-x=-3em'), state.body);
+	change(nudge, '2.5');
+	assert.equal(
+		state.body.split('\n').filter(line => line.startsWith('% offset-x=')).length,
+		1,
+		'the nudge directive is rewritten, not stacked',
+	);
+	change(nudge, '0');
+	assert.ok(!state.body.includes('% offset-x='), 'zero removes the directive');
+	assert.ok(state.body.includes('% align=right-center'), 'alignment is untouched');
+	editor.destroy();
+}
+
+{
+	// A hand-written width that is not a preset stays selectable.
+	const { editor } = makeEditor('% width=420px\n\\begin{tikzpicture}\n\\end{tikzpicture}');
+	editor.togglePanel('picture', true);
+	const widthSelect = editor.root.querySelectorAll('.luatikz-ve-picture select')[1];
+	assert.equal(widthSelect.value, '420px');
+	assert.ok(
+		[...widthSelect.querySelectorAll('option')].some(option => option.value === '420px'),
+		'the source width is offered as an option',
+	);
+	editor.destroy();
+}
+
+{
+	// Options the panel does not model survive a write and are surfaced.
+	const { editor, state } = makeEditor(
+		'\\begin{tikzpicture}[my style, rounded corners]\n\\end{tikzpicture}',
+	);
+	editor.togglePanel('picture', true);
+	const panel = editor.root.querySelector('.luatikz-ve-picture');
+	// align, width in note, arrow tips, …
+	const arrowSelect = panel.querySelectorAll('select')[2];
+	arrowSelect.value = 'Stealth';
+	arrowSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+	assert.ok(state.body.includes('my style, rounded corners'), state.body);
+	assert.ok(state.body.includes('>={Stealth}'), state.body);
+	assert.ok(
+		panel.querySelector('.luatikz-ve-picture-extra code').textContent.includes('my style'),
+		'unmodelled options are shown, not silently carried',
+	);
 	editor.destroy();
 }
 
